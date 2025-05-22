@@ -3,6 +3,7 @@ package tviewview
 import (
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/MelleKoning/ai-chat/internal/genaimodel"
 	"github.com/MelleKoning/ai-chat/internal/prompts"
@@ -18,7 +19,37 @@ type ModelResponseProgress struct {
 	originalOutputViewContents string
 	// added to for each chunk
 	progressString string
+	startTime      time.Time
 }
+
+func (p *ModelResponseProgress) startProgress(tv *tviewApp) {
+	p.originalOutputViewContents = tv.outputView.GetText(false)
+	p.startTime = time.Now()
+}
+func (p *ModelResponseProgress) updateProgressPerChunk(chunk string, tv *tviewApp) {
+	p.progressCount++
+	p.length += len(chunk)
+	elapsed := time.Since(p.startTime)
+	seconds := int64(elapsed.Seconds())
+	milliseconds := int64(elapsed % time.Second / time.Millisecond)
+	elapsedStr := fmt.Sprintf("%d.%03d s", seconds, milliseconds)
+	p.progressString += chunk
+	renderedResult, _ := tv.mdRenderer.GetRendered(p.progressString)
+	txtRendered := tview.TranslateANSI(renderedResult)
+	tv.app.QueueUpdateDraw(func() {
+		tv.progressView.SetText(fmt.Sprintf("Chunks: %d / Length: %d / Time: %s", tv.progress.progressCount,
+			tv.progress.length,
+			elapsedStr))
+		tv.outputView.SetText(p.originalOutputViewContents + txtRendered)
+	})
+}
+
+func (p *ModelResponseProgress) resetProgressString(tv *tviewApp) {
+	p.progressString = ""
+	p.length = 0
+	p.progressCount = 0
+}
+
 type tviewApp struct {
 	app            *tview.Application
 	mdRenderer     terminal.GlamourRenderer // can render markdown colours
@@ -66,31 +97,12 @@ func New(mdrenderer terminal.GlamourRenderer,
 func (tv *tviewApp) createProgressView() {
 	tv.progressView = tview.NewTextView().
 		SetText("").SetDynamicColors(true)
-	//.SetChangedFunc(func() {
-	// redraw when text changes
-	// see onChunkReceived
-	//tv.app.Draw()
-	//})
 	tv.progressView.SetBorder(false)
 
 }
 
 func (tv *tviewApp) onChunkReceived(str string) {
-
-	tv.progress.progressCount++
-	tv.progress.length += len(str)
-
-	// keep track of the progress,
-	// progress is reset in handleModelResult
-	tv.progress.progressString += str
-	renderedResult, _ := tv.mdRenderer.GetRendered(tv.progress.progressString)
-	txtRendered := tview.TranslateANSI(renderedResult)
-
-	tv.app.QueueUpdateDraw(func() {
-		tv.progressView.SetText(fmt.Sprintf("Progress: %d/%d", tv.progress.progressCount, tv.progress.length))
-		tv.outputView.SetText(tv.progress.originalOutputViewContents + txtRendered)
-	})
-
+	tv.progress.updateProgressPerChunk(str, tv)
 }
 
 func (tv *tviewApp) Run() error {
@@ -155,8 +167,9 @@ func (tv *tviewApp) appendUserCommandToOutput(command string) {
 
 func (tv *tviewApp) runModelCommand(command string) {
 	go func() {
-		tv.progress.originalOutputViewContents = tv.outputView.GetText(false)
+		tv.progress.startProgress(tv)
 		// the callback -can- update the outputview for intermediate results
+
 		result, chatErr := tv.aimodel.ChatMessage(command, tv.onChunkReceived)
 		// as we run in an async routine we have
 		// to use the QueueUpdateDraw for all following
@@ -180,7 +193,7 @@ func (tv *tviewApp) handleFinalModelResult(result string, chatErr error) {
 		txtRendered := tview.TranslateANSI(renderedResult)
 		tv.outputView.SetText(tv.outputView.GetText(false) + txtRendered)
 		// reset the progressview
-		tv.progress = ModelResponseProgress{}
+		tv.progress.resetProgressString(tv) // = ModelResponseProgress{}
 	}
 	tv.app.SetFocus(tv.outputView)
 }
@@ -262,6 +275,7 @@ func (tv *tviewApp) SelectSystemPrompt() {
 		log.Println("Selected prompt:", prompt.Name)
 		tv.aimodel.UpdateSystemInstruction(tv.selectedPrompt)
 		// the callback -can- update the outputview for intermediate results
+		tv.progress.startProgress(tv)
 		finalResult, chatErr := tv.aimodel.SendSystemPrompt(tv.onChunkReceived)
 		// as we run in an async routine we have
 		// to use the QueueUpdateDraw for UI updates
