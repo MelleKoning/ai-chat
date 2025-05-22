@@ -28,7 +28,7 @@ type theModel struct {
 // intermediate results in the console
 // and to allow for streaming of the response
 type Action interface {
-	SendSystemPrompt() string
+	SendSystemPrompt(func(string)) (string, error)
 	ReviewFile(func(string)) (string, error)
 	// ChatMessage provides a callback function for each
 	// chunk of the response. Eventually will return the full
@@ -108,42 +108,41 @@ func (m *theModel) ChatMessage(userPrompt string,
 	return fullString, nil
 }
 
-func (m *theModel) SendSystemPrompt() string {
-	systemContent := genai.NewContentFromText(m.systemInstruction, genai.RoleModel)
-	m.chatHistory = append(m.chatHistory, systemContent)
-	commandText := "Hi - please introduce yourselve"
-	genaiCommandPart := genai.NewContentFromText(commandText, genai.RoleUser)
-	genaiContents := append([]*genai.Content{}, genaiCommandPart)
+func (m *theModel) SendSystemPrompt(onChunk func(string)) (string, error) {
+	ctx := context.Background()
+	// Add the prompt to the chat history to not forget about it
+	m.chatHistory = append(m.chatHistory, genai.NewContentFromText(m.systemInstruction, genai.RoleModel))
 
-	config := &genai.GenerateContentConfig{
-		SystemInstruction: genai.NewContentFromText(m.systemInstruction, genai.RoleModel),
+	// Create chat with history
+	chat, err := m.client.Chats.Create(ctx, modelName, nil, m.chatHistory)
+	if err != nil {
+		return "", err
 	}
 
-	stream := m.client.Models.GenerateContentStream(
-		context.Background(),
-		modelName,
-		genaiContents,
-		config,
-	)
+	log.Println(m.systemInstruction)
+	// Send message to the model using streaming
+	stream := chat.SendMessageStream(ctx, *genai.NewPartFromText(m.systemInstruction))
 
 	// process response
 	var allModelParts []*genai.Part
 
 	for chunk, err := range stream {
 		if err != nil {
-			fmt.Println(err)
-			break
+			log.Printf("Error receiving stream: %v", err)
+
+			fullString := buildString(allModelParts)
+
+			return fullString, err
 		}
-		printResponse(chunk)
 
 		part := chunk.Candidates[0].Content.Parts[0]
+		onChunk(part.Text)
 		allModelParts = append(allModelParts, part)
-
 	}
 
 	fullString := buildString(allModelParts)
 
-	return fullString
+	return fullString, nil
 }
 
 // ReviewFile revies the "gitdiff.txt" file
@@ -243,16 +242,6 @@ func (m *theModel) addAFile(ctx context.Context, client *genai.Client) (*genai.P
 	}
 
 	return genai.NewPartFromURI(upFile.URI, upFile.MIMEType), upFile.URI
-}
-
-func printResponse(resp *genai.GenerateContentResponse) {
-	result := resp.Candidates[0].Content.Parts[0]
-
-	if result != nil {
-		fmt.Print(".")
-	} else {
-		fmt.Print("-")
-	}
 }
 
 func buildString(resp []*genai.Part) string {

@@ -6,7 +6,7 @@ type Prompt struct {
 }
 
 var PromptList = []Prompt{
-	{Name: "gitreview prompt",
+	{Name: "Tasks prompt",
 		Prompt: `You are an expert developer and git super user. You do code reviews based on the git diff output between two commits.
 
 	* The diff contains a few unchanged lines of code. Focus on the code that changed. Changed are added and removed lines.
@@ -26,8 +26,8 @@ var PromptList = []Prompt{
 `},
 	{
 
-		Name: "gitreview prompt - only top 2",
-		Prompt: `Please perform a thorough code review of the following git diff. Your review should address the following top 6 tasks:
+		Name: "Top 2 analysis",
+		Prompt: `Please perform a thorough code review of the following git diff. Your review should address the top 2 of the following 6 tasks:
 **Task 1:  Correctness and Error Handling**
 
 * Analyze for logical errors, bugs, and regressions.
@@ -70,7 +70,7 @@ Before answering take the top 2 suggestions as response. Do not respond more tha
 `,
 	},
 	{
-		Name: "gitreview actionable prompt - Address top 2 tasks in each category",
+		Name: "actionable extensive",
 		Prompt: `Please perform a focused code review of the following git diff, providing specific examples  Address the top 2 tasks in each category:
 
 **Context:**
@@ -115,7 +115,7 @@ Provide your review organized by category, with detailed code examples, to illus
 			`,
 	},
 	{
-		Name: "concise prompt - code optimization focused - before and after changes",
+		Name: "code optimization focused",
 		Prompt: `Please provide a code optimization-focused review of the following git diff. Provide "before" and "after" code snippets to illustrate each suggestion.
 
 **Context:**
@@ -151,7 +151,7 @@ Provide detailed explanations for each optimization suggestion, with "before" an
 `,
 	},
 	{
-		Name: "diff refactoring focus - DRY, SOLID",
+		Name: "DRY, SOLID",
 		Prompt: `Please provide a refactoring-focused review of the following git diff, with detailed "before" and "after" code examples *within the scope of the diff*.
 
 **Context:**
