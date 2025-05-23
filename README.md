@@ -17,7 +17,7 @@ References:
 
 To have a good chat rendered in the console the code is now using "tview" as a library. The chat can be controlled by typing a command in the bottom part of the screen and using TAB to go to the SUBMIT button. When submitting the command, the command will be send to the backend gemini API, and the response is being rendered in the outputView at the top.
 
-![Tview chat in console](/docs/demochat.png)
+![Tview chat in console](/docs/demo.gif)
 
 The chat window will have the full history of the chat and when selected (has the focus) you can simply scroll up/down through the chat. Your own commands are shown in green at the moment.
 
