@@ -1,9 +1,7 @@
 package tviewview
 
 import (
-	"fmt"
 	"log"
-	"time"
 
 	"github.com/MelleKoning/ai-chat/internal/genaimodel"
 	"github.com/MelleKoning/ai-chat/internal/prompts"
@@ -13,49 +11,13 @@ import (
 	"github.com/rivo/tview"
 )
 
-type ModelResponseProgress struct {
-	progressCount              int
-	length                     int
-	originalOutputViewContents string
-	// added to for each chunk
-	progressString string
-	startTime      time.Time
-}
-
-func (p *ModelResponseProgress) startProgress(tv *tviewApp) {
-	p.originalOutputViewContents = tv.outputView.GetText(false)
-	p.startTime = time.Now()
-}
-func (p *ModelResponseProgress) updateProgressPerChunk(chunk string, tv *tviewApp) {
-	p.progressCount++
-	p.length += len(chunk)
-	elapsed := time.Since(p.startTime)
-	seconds := int64(elapsed.Seconds())
-	milliseconds := int64(elapsed % time.Second / time.Millisecond)
-	elapsedStr := fmt.Sprintf("%d.%03d s", seconds, milliseconds)
-	p.progressString += chunk
-	renderedResult, _ := tv.mdRenderer.GetRendered(p.progressString)
-	txtRendered := tview.TranslateANSI(renderedResult)
-	tv.app.QueueUpdateDraw(func() {
-		tv.progressView.SetText(fmt.Sprintf("Chunks: %d / Length: %d / Time: %s", tv.progress.progressCount,
-			tv.progress.length,
-			elapsedStr))
-		tv.outputView.SetText(p.originalOutputViewContents + txtRendered)
-	})
-}
-
-func (p *ModelResponseProgress) resetProgressString(tv *tviewApp) {
-	p.progressString = ""
-	p.length = 0
-	p.progressCount = 0
-}
-
 type tviewApp struct {
 	app            *tview.Application
 	mdRenderer     terminal.GlamourRenderer // can render markdown colours
 	flex           *tview.Flex              // the main screen set to root
-	textArea       *tview.TextArea
+	commandArea    *tview.TextArea
 	dropDown       *tview.DropDown
+	titleView      *tview.TextView
 	outputView     *tview.TextView
 	submitButton   *tview.Button
 	progressView   *tview.TextView
@@ -67,6 +29,15 @@ type tviewApp struct {
 type TviewApp interface {
 	Run() error
 	SetDefaultView()
+	Output() string
+}
+
+func (tv *tviewApp) Output() string {
+	outputViewText := tv.outputView.GetText(true)
+
+	renderedTxt, _ := tv.mdRenderer.GetRendered(outputViewText)
+
+	return renderedTxt
 }
 
 // New will create a new VIEW on the terminal
@@ -83,6 +54,8 @@ func New(mdrenderer terminal.GlamourRenderer,
 			tview.FlexRow,
 		),
 	}
+	tv.progress = ModelResponseProgress{tv: tv}
+	tv.createTitleView()
 	tv.createOutputView()
 	tv.createTextArea()
 	tv.createSubmitButton()
@@ -94,6 +67,17 @@ func New(mdrenderer terminal.GlamourRenderer,
 	return tv
 }
 
+func (tv *tviewApp) createTitleView() {
+	tv.titleView = tview.NewTextView().
+		SetText("AI Chat").
+		SetTextAlign(tview.AlignCenter).
+		SetDynamicColors(true)
+	tv.titleView.SetBorder(false)
+
+	tv.titleView.SetBackgroundColor(tcell.ColorDefault)
+	tv.titleView.SetTextColor(tcell.ColorDefault)
+}
+
 func (tv *tviewApp) createProgressView() {
 	tv.progressView = tview.NewTextView().
 		SetText("").SetDynamicColors(true)
@@ -102,7 +86,7 @@ func (tv *tviewApp) createProgressView() {
 }
 
 func (tv *tviewApp) onChunkReceived(str string) {
-	tv.progress.updateProgressPerChunk(str, tv)
+	tv.progress.updateProgressPerChunk(str)
 }
 
 func (tv *tviewApp) Run() error {
@@ -127,17 +111,25 @@ func (tv *tviewApp) createOutputView() {
 			tv.app.SetFocus(tv.dropDown)
 		}
 	})
-
-	tv.outputView.SetBorder(true).SetBackgroundColor(tcell.ColorBlack)
+	tv.outputView.SetBorder(false).
+		SetFocusFunc(func() {
+			tv.titleView.SetTextColor(tcell.ColorWhite)
+			tv.titleView.SetBackgroundColor(tcell.ColorDarkBlue)
+		}).SetBlurFunc(func() {
+		tv.titleView.SetTextColor(tcell.ColorGray)
+		tv.titleView.SetBackgroundColor(tcell.ColorDarkBlue)
+	})
+	tv.outputView.SetTextStyle(tcell.StyleDefault)
 }
 
 func (tv *tviewApp) createTextArea() {
 	// Create an input field for user input
-	tv.textArea = tview.NewTextArea().
-		SetLabel("Enter command: ")
-	tv.textArea.SetBorder(true)
+	tv.commandArea = tview.NewTextArea()
+
+	tv.commandArea.SetBorder(true)
+	tv.commandArea.SetTitle("Enter command: ")
 	// Capture key events for the text area
-	tv.textArea.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+	tv.commandArea.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		if event.Key() == tcell.KeyTAB {
 			tv.app.SetFocus(tv.submitButton) // Move focus to the submit button
 			return nil                       // Consume the event
@@ -151,7 +143,7 @@ func (tv *tviewApp) createTextArea() {
 	// we have to enable pasting for the user
 	// for the whole app so that user can
 	// paste into the Text Area
-	tv.app.SetFocus(tv.textArea).EnablePaste(true)
+	tv.app.SetFocus(tv.commandArea).EnablePaste(true)
 }
 
 func (tv *tviewApp) appendUserCommandToOutput(command string) {
@@ -167,7 +159,7 @@ func (tv *tviewApp) appendUserCommandToOutput(command string) {
 
 func (tv *tviewApp) runModelCommand(command string) {
 	go func() {
-		tv.progress.startProgress(tv)
+		tv.progress.startProgress()
 		// the callback -can- update the outputview for intermediate results
 
 		result, chatErr := tv.aimodel.ChatMessage(command, tv.onChunkReceived)
@@ -178,7 +170,7 @@ func (tv *tviewApp) runModelCommand(command string) {
 			tv.outputView.SetText(tv.progress.originalOutputViewContents) // reset back
 			tv.handleFinalModelResult(result, chatErr)
 			// replace the command box
-			tv.textArea.Replace(0, len(command), "")
+			tv.commandArea.Replace(0, len(command), "")
 		})
 	}()
 }
@@ -195,7 +187,7 @@ func (tv *tviewApp) handleFinalModelResult(result string, chatErr error) {
 		txtRendered := tview.TranslateANSI(renderedResult)
 		tv.outputView.SetText(tv.outputView.GetText(false) + txtRendered)
 		// reset the progressview
-		tv.progress.resetProgressString(tv) // = ModelResponseProgress{}
+		tv.progress.resetProgressString()
 	}
 	tv.app.SetFocus(tv.outputView)
 }
@@ -203,7 +195,15 @@ func (tv *tviewApp) handleFinalModelResult(result string, chatErr error) {
 func (tv *tviewApp) createSubmitButton() {
 	tv.submitButton = tview.NewButton("Submit").SetSelectedFunc(
 		func() {
-			command := tv.textArea.GetText()
+			command := tv.commandArea.GetText()
+			// validation
+			if command == "" {
+				// TODO: create modal dialog
+				// to inform the userthat command is empty.
+				// postpone this when we support tview.pages
+
+				return
+			}
 			tv.appendUserCommandToOutput(command)
 			// Execute model
 			tv.runModelCommand(command)
@@ -244,7 +244,7 @@ func (tv *tviewApp) createDropDown() {
 			}
 		}).SetDoneFunc(func(key tcell.Key) {
 		if key == tcell.KeyTAB {
-			tv.app.SetFocus(tv.textArea)
+			tv.app.SetFocus(tv.commandArea)
 		}
 	})
 }
@@ -276,7 +276,7 @@ func (tv *tviewApp) SelectSystemPrompt() {
 		log.Println("Selected prompt:", prompt.Name)
 		tv.aimodel.UpdateSystemInstruction(tv.selectedPrompt)
 		// the callback -can- update the outputview for intermediate results
-		tv.progress.startProgress(tv)
+		tv.progress.startProgress()
 		finalResult, chatErr := tv.aimodel.SendSystemPrompt(tv.onChunkReceived)
 		// as we run in an async routine we have
 		// to use the QueueUpdateDraw for UI updates
@@ -355,13 +355,15 @@ func (tv *tviewApp) createPromptSelectionModal() chan prompts.Prompt {
 // of the tviewApp
 func (tv *tviewApp) SetDefaultView() {
 	tv.flex.Clear()
+
 	buttonRow := tview.NewFlex().
 		AddItem(tv.submitButton, 0, 1, false).
 		AddItem(tv.progressView, 0, 1, false)
 	tv.flex.
 		SetDirection(tview.FlexRow).
+		AddItem(tv.titleView, 1, 1, false).
 		AddItem(tv.outputView, 0, 10, true).
 		AddItem(tv.dropDown, 1, 1, true).
-		AddItem(tv.textArea, 0, 3, true).
+		AddItem(tv.commandArea, 0, 3, true).
 		AddItem(buttonRow, 1, 1, true)
 }

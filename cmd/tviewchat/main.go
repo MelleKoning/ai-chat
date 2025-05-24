@@ -33,6 +33,8 @@ func main() {
 	if err := tviewApp.Run(); err != nil {
 		log.Fatal(err)
 	}
+
+	fmt.Println(tviewApp.Output())
 }
 
 func OpenTheLog() func() {
@@ -50,6 +52,7 @@ func OpenTheLog() func() {
 	//... Rest of your code
 
 	return func() {
+		log.Println("Application exiting")
 		err := logFile.Close()
 		if err != nil {
 			log.Println("Error closing log file:", err)
