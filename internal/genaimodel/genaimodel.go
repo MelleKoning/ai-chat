@@ -2,10 +2,10 @@ package genaimodel
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"os"
 	"strings"
+	"sync"
 
 	// genai is the successor of the previous
 	// generative-ai-go model
@@ -74,6 +74,35 @@ func (m *theModel) ChatMessage(userPrompt string,
 	onChunk func(string)) (string, error) {
 	ctx := context.Background()
 
+	// Create a buffered channel to process chunks
+	chunkChan := make(chan string, 20) // buffer size can be adjusted
+
+	// Create a WaitGroup to signal when the goroutine has finished
+	var wg sync.WaitGroup
+
+	wg.Add(1)
+	// Start a goroutine to process chunks
+	go func() {
+		defer wg.Done()
+		for chunk := range chunkChan {
+			// The callback func can take longer
+			// then the processing of the stream response
+			onChunk(chunk)
+		}
+	}()
+
+	// setup defer to close the channel
+	// and the waitgroup
+	defer func() {
+		close(chunkChan)
+		// Wait for the goroutine to finish
+		// it can take the tview console some time
+		// to process each chunk in the above go routine
+		// and we have to await that before returning
+		// the final result
+		wg.Wait()
+	}()
+
 	// Add user prompt to chat history
 	m.chatHistory = append(m.chatHistory, genai.NewContentFromText(userPrompt, genai.RoleUser))
 
@@ -86,26 +115,26 @@ func (m *theModel) ChatMessage(userPrompt string,
 	// Send message to the model using streaming
 	stream := chat.SendMessageStream(ctx, genai.Part{Text: userPrompt})
 
-	var allModelParts []*genai.Part
+	var fullString strings.Builder
 
-	for chunk, err := range stream {
+	for respChunk, err := range stream {
 		if err != nil {
-			fmt.Println("Error receiving stream:", err)
-			break
+			log.Println("Error receiving stream:", err)
+
+			return "", err
 		}
-		part := chunk.Candidates[0].Content.Parts[0]
-		onChunk(part.Text) // raise callback func
-		allModelParts = append(allModelParts, part)
+		part := respChunk.Candidates[0].Content.Parts[0]
+		chunkChan <- part.Text // send chunk to channel
+		fullString.WriteString(part.Text)
 	}
 
-	// concatenate the output model answer
-	fullString := buildString(allModelParts)
-
+	chatResponse := fullString.String()
 	// Add the combined response to chat history
-	modelResponse := genai.NewContentFromText(fullString, genai.RoleModel)
+	modelResponse := genai.NewContentFromText(chatResponse, genai.RoleModel)
 	m.chatHistory = append(m.chatHistory, modelResponse)
 
-	return fullString, nil
+	log.Println("chat response generated")
+	return chatResponse, nil
 }
 
 func (m *theModel) SendSystemPrompt(onChunk func(string)) (string, error) {
@@ -199,9 +228,6 @@ func (m *theModel) ReviewFile(onChunk func(string)) (string, error) {
 			return "", err
 
 		}
-
-		//printResponse(chunk)
-
 		part := chunk.Candidates[0].Content.Parts[0]
 		onChunk(part.Text) // raise callback func
 		allModelParts = append(allModelParts, part)

@@ -177,6 +177,8 @@ func (tv *tviewApp) runModelCommand(command string) {
 		tv.app.QueueUpdateDraw(func() {
 			tv.outputView.SetText(tv.progress.originalOutputViewContents) // reset back
 			tv.handleFinalModelResult(result, chatErr)
+			// replace the command box
+			tv.textArea.Replace(0, len(command), "")
 		})
 	}()
 }
@@ -205,7 +207,6 @@ func (tv *tviewApp) createSubmitButton() {
 			tv.appendUserCommandToOutput(command)
 			// Execute model
 			tv.runModelCommand(command)
-
 		}).
 		SetExitFunc(func(key tcell.Key) {
 			if key == tcell.KeyTAB {
