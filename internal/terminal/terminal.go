@@ -42,8 +42,8 @@ func (gr *glamourRenderer) GetRendered(str string) (string, error) {
 }
 
 func (gr *glamourRenderer) FormatUserText(str string, historyLength int) (string, error) {
-	s := fmt.Sprintf("History items: %d\n", historyLength)
-	s = s + colorGreen + str
+	s := fmt.Sprintf(colorCyan+"History items: %d\n", historyLength)
+	s = s + str
 	return s, nil
 }
 func PrintGlamourString(theString string) {
