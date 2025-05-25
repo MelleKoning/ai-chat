@@ -2,6 +2,7 @@ package tviewview
 
 import (
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -19,6 +20,67 @@ type ModelResponseProgress struct {
 	tv               *tviewApp
 }
 
+func (p *ModelResponseProgress) StartCommand() {
+	command := p.tv.commandArea.GetText()
+	// validation
+	if command == "" {
+		// TODO: create modal dialog
+		// to inform the userthat command is empty.
+		// postpone this when we support tview.pages
+
+		return
+	}
+	p.appendUserCommandToOutput(command)
+	// Execute model
+	p.runModelCommand(command)
+
+}
+
+func (p *ModelResponseProgress) appendUserCommandToOutput(command string) {
+	p.tv.app.SetFocus(p.tv.progressView) // remove highlight from button
+	txtRendered, err := p.tv.mdRenderer.FormatUserText(command,
+		p.tv.aimodel.GetHistoryLength())
+	if err != nil {
+		log.Print(err)
+	}
+	txtRendered = tview.TranslateANSI(txtRendered)
+	p.tv.outputView.SetText(p.tv.outputView.GetText(false) + txtRendered)
+}
+
+func (p *ModelResponseProgress) runModelCommand(command string) {
+	go func() {
+		p.startProgress()
+		// the callback -can- update the outputview for intermediate results
+
+		result, chatErr := p.tv.aimodel.ChatMessage(command, p.tv.onChunkReceived)
+		// as we run in an async routine we have
+		// to use the QueueUpdateDraw for all following
+		// UI updates
+		p.tv.app.QueueUpdateDraw(func() {
+			p.tv.outputView.SetText(p.tv.progress.originalOutputViewContents) // reset back
+			p.handleFinalModelResult(result, chatErr)
+			// replace the command box
+			p.tv.commandArea.Replace(0, len(command), "")
+		})
+	}()
+}
+
+// handleFinalModelResult is called async from the main thread
+// therefore the app.QueueUpdateDraw is used to update the UI
+// we can safely write to all the UI elements because
+// this func is already called from QueueUpdateDraw
+func (p *ModelResponseProgress) handleFinalModelResult(result string, chatErr error) {
+	if chatErr != nil {
+		p.tv.outputView.SetText(p.tv.outputView.GetText(false) + result + "\n" + chatErr.Error())
+	} else {
+		renderedResult, _ := p.tv.mdRenderer.GetRendered(result)
+		txtRendered := tview.TranslateANSI(renderedResult)
+		p.tv.outputView.SetText(p.tv.outputView.GetText(false) + txtRendered)
+		// reset the progressview
+		p.tv.progress.resetProgressString()
+	}
+	p.tv.app.SetFocus(p.tv.outputView)
+}
 func (p *ModelResponseProgress) startProgress() {
 	p.originalOutputViewContents = p.tv.outputView.GetText(false)
 	p.startTime = time.Now()

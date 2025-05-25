@@ -146,68 +146,10 @@ func (tv *tviewApp) createTextArea() {
 	tv.app.SetFocus(tv.commandArea).EnablePaste(true)
 }
 
-func (tv *tviewApp) appendUserCommandToOutput(command string) {
-	tv.app.SetFocus(tv.progressView) // remove highlight from button
-	txtRendered, err := tv.mdRenderer.FormatUserText(command,
-		tv.aimodel.GetHistoryLength())
-	if err != nil {
-		log.Print(err)
-	}
-	txtRendered = tview.TranslateANSI(txtRendered)
-	tv.outputView.SetText(tv.outputView.GetText(false) + txtRendered)
-}
-
-func (tv *tviewApp) runModelCommand(command string) {
-	go func() {
-		tv.progress.startProgress()
-		// the callback -can- update the outputview for intermediate results
-
-		result, chatErr := tv.aimodel.ChatMessage(command, tv.onChunkReceived)
-		// as we run in an async routine we have
-		// to use the QueueUpdateDraw for all following
-		// UI updates
-		tv.app.QueueUpdateDraw(func() {
-			tv.outputView.SetText(tv.progress.originalOutputViewContents) // reset back
-			tv.handleFinalModelResult(result, chatErr)
-			// replace the command box
-			tv.commandArea.Replace(0, len(command), "")
-		})
-	}()
-}
-
-// handleFinalModelResult is called async from the main thread
-// therefore the app.QueueUpdateDraw is used to update the UI
-// we can safely write to all the UI elements because
-// this func is already called from QueueUpdateDraw
-func (tv *tviewApp) handleFinalModelResult(result string, chatErr error) {
-	if chatErr != nil {
-		tv.outputView.SetText(tv.outputView.GetText(false) + result + "\n" + chatErr.Error())
-	} else {
-		renderedResult, _ := tv.mdRenderer.GetRendered(result)
-		txtRendered := tview.TranslateANSI(renderedResult)
-		tv.outputView.SetText(tv.outputView.GetText(false) + txtRendered)
-		// reset the progressview
-		tv.progress.resetProgressString()
-	}
-	tv.app.SetFocus(tv.outputView)
-}
-
 func (tv *tviewApp) createSubmitButton() {
 	tv.submitButton = tview.NewButton("Submit").SetSelectedFunc(
-		func() {
-			command := tv.commandArea.GetText()
-			// validation
-			if command == "" {
-				// TODO: create modal dialog
-				// to inform the userthat command is empty.
-				// postpone this when we support tview.pages
-
-				return
-			}
-			tv.appendUserCommandToOutput(command)
-			// Execute model
-			tv.runModelCommand(command)
-		}).
+		tv.progress.StartCommand,
+	).
 		SetExitFunc(func(key tcell.Key) {
 			if key == tcell.KeyTAB {
 				tv.app.SetFocus(tv.outputView)
@@ -235,7 +177,7 @@ func (tv *tviewApp) createDropDown() {
 			case "ReviewFile":
 				// Prompt user for file path (simple version: use textArea input)
 				filePath := "gitdiff.txt"
-				tv.appendUserCommandToOutput("[ReviewFile] " + filePath)
+				tv.progress.appendUserCommandToOutput("[ReviewFile] " + filePath)
 				tv.progress.originalOutputViewContents = tv.outputView.GetText(false)
 				go func() { // async for the chunk updates
 					result, err := tv.aimodel.ReviewFile(tv.onChunkReceived)
@@ -282,7 +224,7 @@ func (tv *tviewApp) SelectSystemPrompt() {
 		// to use the QueueUpdateDraw for UI updates
 		tv.app.QueueUpdateDraw(func() {
 			tv.outputView.SetText(tv.progress.originalOutputViewContents) // reset back
-			tv.handleFinalModelResult(finalResult, chatErr)
+			tv.progress.handleFinalModelResult(finalResult, chatErr)
 		})
 	}()
 
