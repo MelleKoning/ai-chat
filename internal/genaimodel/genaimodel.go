@@ -5,7 +5,6 @@ import (
 	"log"
 	"os"
 	"strings"
-	"sync"
 
 	// genai is the successor of the previous
 	// generative-ai-go model
@@ -22,18 +21,23 @@ type theModel struct {
 	chatHistory       []*genai.Content
 }
 
+type ChatResult struct {
+	Response   string
+	ChunkCount int
+}
+
 // Action is the interface for the model
 // to support the tview console application
 // the callback function in the chat is to present
 // intermediate results in the console
 // and to allow for streaming of the response
 type Action interface {
-	SendSystemPrompt(func(string)) (string, error)
+	SendSystemPrompt(func(string)) (ChatResult, error)
 	ReviewFile(func(string)) (string, error)
 	// ChatMessage provides a callback function for each
 	// chunk of the response. Eventually will return the full
 	// response as a string
-	ChatMessage(string, func(string)) (string, error)
+	ChatMessage(string, func(string)) (ChatResult, error)
 	UpdateSystemInstruction(string)
 	GetHistoryLength() int
 }
@@ -71,36 +75,49 @@ func (m *theModel) UpdateSystemInstruction(systemInstruction string) {
 // userPrompt: the prompt to send to the model
 // onChunk: a callback function that is called for each chunk of the response
 func (m *theModel) ChatMessage(userPrompt string,
-	onChunk func(string)) (string, error) {
+	onChunk func(string)) (ChatResult, error) {
 	ctx := context.Background()
 
 	// Create a buffered channel to process chunks
-	chunkChan := make(chan string, 20) // buffer size can be adjusted
+	chunkChan := make(chan string, 100)
 
-	// Create a WaitGroup to signal when the goroutine has finished
-	var wg sync.WaitGroup
+	// Create a channel to signal stream completion
+	streamDone := make(chan bool)
+	defer close(streamDone)
 
-	wg.Add(1)
 	// Start a goroutine to process chunks
 	go func() {
-		defer wg.Done()
-		for chunk := range chunkChan {
-			// The callback func can take longer
-			// then the processing of the stream response
-			onChunk(chunk)
+		defer func() {
+			// Drain any remaining chunks in the channel before exiting
+			// in case stream is done and we want to return early
+			for range chunkChan {
+				//Keep consuming the channel.
+			}
+		}()
+		for {
+			select {
+			case chunk := <-chunkChan:
+				// The callback func which renders intermediate cunks
+				// on the UI could take longer
+				// then the full processing of the stream response, that is
+				// why we have a separate goroutine to process the chunks
+				onChunk(chunk)
+			case <-streamDone:
+				// Stream is complete, exit the loop
+				return
+			}
 		}
 	}()
 
 	// setup defer to close the channel
-	// and the waitgroup
 	defer func() {
+		// closing the chunkChan can result that not all
+		// chunks are sent to the callback func but that
+		// is all right because the stream is complete, will
+		// return the full response which will be rendered
+		// in the UI
 		close(chunkChan)
-		// Wait for the goroutine to finish
-		// it can take the tview console some time
-		// to process each chunk in the above go routine
-		// and we have to await that before returning
-		// the final result
-		wg.Wait()
+
 	}()
 
 	// Add user prompt to chat history
@@ -109,24 +126,29 @@ func (m *theModel) ChatMessage(userPrompt string,
 	// Create chat with history
 	chat, err := m.client.Chats.Create(ctx, modelName, nil, m.chatHistory)
 	if err != nil {
-		return "", err
+		return ChatResult{}, err
 	}
 
 	// Send message to the model using streaming
 	stream := chat.SendMessageStream(ctx, genai.Part{Text: userPrompt})
 
 	var fullString strings.Builder
-
+	var chunkCount int
 	for respChunk, err := range stream {
 		if err != nil {
 			log.Println("Error receiving stream:", err)
 
-			return "", err
+			return ChatResult{}, err
 		}
 		part := respChunk.Candidates[0].Content.Parts[0]
 		chunkChan <- part.Text // send chunk to channel
 		fullString.WriteString(part.Text)
+		chunkCount++
 	}
+
+	// Signal that the stream is complete
+	// to stop calling the callBack funcs for each chunk
+	streamDone <- true
 
 	chatResponse := fullString.String()
 	// Add the combined response to chat history
@@ -134,10 +156,10 @@ func (m *theModel) ChatMessage(userPrompt string,
 	m.chatHistory = append(m.chatHistory, modelResponse)
 
 	log.Println("chat response generated")
-	return chatResponse, nil
+	return ChatResult{chatResponse, chunkCount}, nil
 }
 
-func (m *theModel) SendSystemPrompt(onChunk func(string)) (string, error) {
+func (m *theModel) SendSystemPrompt(onChunk func(string)) (ChatResult, error) {
 	ctx := context.Background()
 	// Add the prompt to the chat history to not forget about it
 	m.chatHistory = append(m.chatHistory, genai.NewContentFromText(m.systemInstruction, genai.RoleModel))
@@ -145,7 +167,7 @@ func (m *theModel) SendSystemPrompt(onChunk func(string)) (string, error) {
 	// Create chat with history
 	chat, err := m.client.Chats.Create(ctx, modelName, nil, m.chatHistory)
 	if err != nil {
-		return "", err
+		return ChatResult{}, err
 	}
 
 	log.Println(m.systemInstruction)
@@ -154,24 +176,25 @@ func (m *theModel) SendSystemPrompt(onChunk func(string)) (string, error) {
 
 	// process response
 	var allModelParts []*genai.Part
-
+	var chunkCounter int
 	for chunk, err := range stream {
 		if err != nil {
 			log.Printf("Error receiving stream: %v", err)
 
 			fullString := buildString(allModelParts)
 
-			return fullString, err
+			return ChatResult{fullString, chunkCounter}, err
 		}
 
 		part := chunk.Candidates[0].Content.Parts[0]
 		onChunk(part.Text)
 		allModelParts = append(allModelParts, part)
+		chunkCounter++
 	}
 
 	fullString := buildString(allModelParts)
 
-	return fullString, nil
+	return ChatResult{fullString, chunkCounter}, nil
 }
 
 // ReviewFile revies the "gitdiff.txt" file

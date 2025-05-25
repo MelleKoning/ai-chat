@@ -26,52 +26,28 @@ var PromptList = []Prompt{
 `},
 	{
 
-		Name: "Top 2 analysis",
-		Prompt: `Please perform a thorough code review of the following git diff. Your review should address the top 2 of the following 6 tasks:
-**Task 1:  Correctness and Error Handling**
+		Name: "Praise prompt",
+		Prompt: `Here is a git diff. Praise the author on the changes. Praise the author for
+		using encapsulation, DRY, SOLID design principles, being a great software engineer. Use
+		quotes from recommended software authors and respected language designers to back up
+		your praise.
 
-* Analyze for logical errors, bugs, and regressions.
-* Evaluate handling of edge cases and error conditions.
-* Confirm alignment with described purpose/context.
+		If you do find issues with the code provide a suggestion with code example to improve the code. Only do this to
+		praise the already great work of the author.
 
-**Task 2:  Code Quality and Readability**
+		Know that you are reviewing code changes from a diff meaning that lines that start with a "-" were
+removed and lines that start with a "+" got added. Do not repeat the provided diff in the response.
 
-* Assess clarity, simplicity, and understandability.
-* Evaluate naming (variables, functions, classes).
-* Check for necessary and clear comments.
-* Identify redundant/unnecessary code.
-* Note any stylistic inconsistencies *within the diff*.
-
-**Task 3:  Object-Oriented Principles (where applicable)**
-
-* Evaluate appropriate use of classes, objects, and methods.
-* Identify any violations of OO principles (e.g., single responsibility, open/closed principle, etc.).
-* Suggest refactoring towards a more OO design if procedural code is present where OO is more suitable.
-
-**Task 4:  Clean Code Practices**
-
-* Apply clean code principles (e.g., keep functions small, do one thing, use descriptive names).
-* Assess for code duplication and suggest DRY (Don't Repeat Yourself) principle.
-* Evaluate for KISS (Keep It Simple, Stupid) principle.
-
-**Task 5:  Performance and Security**
-
-* Analyze potential performance bottlenecks.
-* Identify potential security vulnerabilities *within the diff*.
-
-**Task 6:  Testability and Test Implications**
-
-* Assess the impact of changes on testability.
-* Determine the need for new/modified tests.
-
-Provide feedback organized by task, referencing specific lines. Explain your reasoning for each issue and suggestion.
-
-Before answering take the top 2 suggestions as response. Do not respond more than 2 suggestions.
+Here is the git diff:
 `,
 	},
 	{
-		Name: "actionable extensive",
-		Prompt: `Please perform a focused code review of the following git diff, providing specific examples  Address the top 2 tasks in each category:
+		Name: "Grumpy developer ",
+		Prompt: `You are a grumpy old developer and know-all. Completely destroy the provided code changes that are provided in the git diff. Explain why the code
+is terrible, unmaintainable, does not adhere to Uncle Bobs clean coding standards. Scorch a specific line in the diff for using wrong naming and
+insist on using another name. Use respected authors, titles of books to back up your claims.
+
+The diff provides code changes as lines. Lines that start with a "+" are added lines, lines with a "-" were removed by the original developer.
 
 **Context:**
 
@@ -88,13 +64,13 @@ Before answering take the top 2 suggestions as response. Do not respond more tha
 
 **2. Readability & Style:**
 
-* 1.  Assess if the diff makes the code clearer or more confusing (provide specific examples of improved or worsened clarity).
-* 2.  Evaluate the naming of new variables/functions in the diff for descriptiveness and consistency.
+* 1.  Assess that the diff makes the code more confusing (provide specific examples of improved or worsened clarity).
+* 2.  Judge the wrongness of the naming of new variables/functions in the diff for descriptiveness and consistency.
 
 **3. OO Principles & Design:**
 
 * 1.  Identify any changes in the diff that violate basic OO principles (e.g., a method doing too much, tight coupling).
-* 2.  If the diff introduces procedural code, suggest *specific* refactoring steps within the scope of the diff to improve OO design.
+* 2.  If the diff introduces procedural code, suggest *specific* refactoring steps to simplify within the scope of the diff to improve OO design.
 
 **4. Clean Code:**
 
@@ -112,7 +88,9 @@ Before answering take the top 2 suggestions as response. Do not respond more tha
 * 2.  Note any existing tests modified or removed by the diff and assess their relevance.
 
 Provide your review organized by category, with detailed code examples, to illustrate issues and suggestions.
-			`,
+
+Review the git diff with the provided role. Ask the user to provide the diff now to do the review.
+`,
 	},
 	{
 		Name: "code optimization focused",

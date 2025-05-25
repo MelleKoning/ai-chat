@@ -85,10 +85,6 @@ func (tv *tviewApp) createProgressView() {
 
 }
 
-func (tv *tviewApp) onChunkReceived(str string) {
-	tv.progress.updateProgressPerChunk(str)
-}
-
 func (tv *tviewApp) Run() error {
 	err := tv.app.Run()
 	if err != nil {
@@ -180,7 +176,7 @@ func (tv *tviewApp) createDropDown() {
 				tv.progress.appendUserCommandToOutput("[ReviewFile] " + filePath)
 				tv.progress.originalOutputViewContents = tv.outputView.GetText(false)
 				go func() { // async for the chunk updates
-					result, err := tv.aimodel.ReviewFile(tv.onChunkReceived)
+					result, err := tv.aimodel.ReviewFile(tv.progress.onChunkReceived)
 					tv.UpdateOutputView(result, err)
 				}()
 			}
@@ -219,7 +215,7 @@ func (tv *tviewApp) SelectSystemPrompt() {
 		tv.aimodel.UpdateSystemInstruction(tv.selectedPrompt)
 		// the callback -can- update the outputview for intermediate results
 		tv.progress.startProgress()
-		finalResult, chatErr := tv.aimodel.SendSystemPrompt(tv.onChunkReceived)
+		finalResult, chatErr := tv.aimodel.SendSystemPrompt(tv.progress.onChunkReceived)
 		// as we run in an async routine we have
 		// to use the QueueUpdateDraw for UI updates
 		tv.app.QueueUpdateDraw(func() {
