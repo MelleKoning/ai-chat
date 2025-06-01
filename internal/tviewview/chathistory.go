@@ -41,6 +41,11 @@ func (tv *tviewApp) storeChatHistory() {
 // and runs from the async routine selected from the
 // dropdown, so updates are done via QueueUpdateDraw
 func (tv *tviewApp) loadChatHistory(filename string) {
+	// Start progress *before* loading from disk to measure total time.
+	tv.app.QueueUpdate(func() {
+		tv.progress.startProgress()
+		tv.outputView.Clear() // Clear the output view *before* starting the load
+	})
 	contentList, err := tv.aimodel.LoadChatHistory(filename)
 	if err != nil {
 		log.Printf("Error loading chat history: %v", err)
@@ -51,13 +56,8 @@ func (tv *tviewApp) loadChatHistory(filename string) {
 		return
 	}
 	log.Printf("Chat history loaded from: %s", filename)
-	tv.app.QueueUpdate(func() {
-		tv.progressView.SetText(fmt.Sprintf("Chat history loaded from %s", filename))
-		// Update the outputView with the loaded chat history
-		// (You'll need to iterate through the chatHistory and format the output)
-		tv.outputView.Clear()
-	})
 
+	// Update the outputView with the loaded chat history
 	for _, content := range contentList {
 		// Format the output based on the content's role (user or model)
 		if content.Role == "user" {
