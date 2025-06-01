@@ -40,6 +40,11 @@ type Action interface {
 	ChatMessage(string, func(string)) (ChatResult, error)
 	UpdateSystemInstruction(string)
 	GetHistoryLength() int
+
+	// Chat History
+	StoreChatHistory(string) error
+	LoadChatHistory(string) ([]*genai.Content, error)
+	GenerateChatSummary() (string, error)
 }
 
 // NewModel sets up the client for communication with Gemini. Ensure
@@ -78,10 +83,12 @@ func (m *theModel) ChatMessage(userPrompt string,
 	onChunk func(string)) (ChatResult, error) {
 	ctx := context.Background()
 
-	// Create a buffered channel to process chunks
+	// Create a buffered channel to process chunks.
+	// The buffer size is set to 100 to avoid blocking the stream processing goroutine.
 	chunkChan := make(chan string, 100)
 
-	// Create a channel to signal stream completion
+	// streamDone is used to indicate stream completion.
+	// To communicate the final result back at the end
 	streamDone := make(chan bool)
 	defer close(streamDone)
 
@@ -301,4 +308,29 @@ func buildString(resp []*genai.Part) string {
 	}
 
 	return build.String()
+}
+
+func (m *theModel) GenerateChatSummary() (string, error) {
+	ctx := context.Background()
+
+	chat, err := m.client.Chats.Create(ctx, modelName, nil, m.chatHistory)
+	if err != nil {
+		return "", err
+	}
+
+	// Craft the prompt for the AI model
+	prompt := `Summarize the chat history in approximately 10-15 keywords, suitable for use in
+  a filename.  Do not include punctuation or special characters.
+  Only respond with the summary for the filename`
+
+	// Send the message to the model
+	prt := &genai.Part{Text: prompt}
+	resp, err := chat.Send(ctx, prt) // Use SendMessage instead of SendMessageStream
+	if err != nil {
+		return "", err
+	}
+
+	summary := resp.Candidates[0].Content.Parts[0].Text
+
+	return string(summary), nil
 }
