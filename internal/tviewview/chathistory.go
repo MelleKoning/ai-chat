@@ -1,6 +1,7 @@
 package tviewview
 
 import (
+	"errors"
 	"fmt"
 	"io/fs"
 	"log"
@@ -13,6 +14,13 @@ import (
 	"github.com/MelleKoning/ai-chat/internal/genaimodel"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
+)
+
+var ErrNoChatHistoryFiles = errors.New("no chat history files found")
+
+const (
+	fileSelectionModalPageName = "fileSelectionModal"
+	confirmationPageName       = "confirmation"
 )
 
 func (tv *tviewApp) storeChatHistory() {
@@ -74,21 +82,27 @@ func (tv *tviewApp) loadChatHistory(filename string) {
 			})
 		}
 	}
+
+	tv.app.QueueUpdateDraw(func() {
+		tv.app.SetRoot(tv.flex, true)
+	})
 }
 
-func getChatHistoryFiles() ([]string, error) {
+func getChatHistoryFolder() string {
 	// 1. Get the user's configuration directory
 	configDir, err := os.UserConfigDir()
 	if err != nil {
-		return nil, err
+		log.Printf("Error getting user config directory: %v", err)
+		return "unkowndir"
 	}
 
-	// 2. Construct the history directory path
-	historyDir := filepath.Join(configDir, "ai-chat", "history")
+	return filepath.Join(configDir, "ai-chat", "history")
+}
+func getChatHistoryFiles() ([]string, error) {
 
 	// 3. Read the files from the directory
 	var files []string
-	err = filepath.WalkDir(historyDir, func(path string, d fs.DirEntry, err error) error {
+	err := filepath.WalkDir(getChatHistoryFolder(), func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -105,32 +119,104 @@ func getChatHistoryFiles() ([]string, error) {
 	return files, nil
 }
 
-func (tv *tviewApp) createChatHistorySelectionModal(selectedFileChan chan string) {
-	chatHistoryFiles, err := getChatHistoryFiles()
+func (tv *tviewApp) refreshFileList(fileList *tview.List) ([]string, error) {
+	files, err := getChatHistoryFiles()
 	if err != nil {
-		log.Printf("Error getting chat history files: %v", err)
-		tv.progressView.SetText(fmt.Sprintf("Error getting chat history files: %v", err))
-		selectedFileChan <- "" // Signal error by sending an empty string
+		return nil, fmt.Errorf("error getting chat history files: %w", err)
+	}
+
+	if len(files) == 0 {
+		return nil, ErrNoChatHistoryFiles
+	}
+
+	fileList.Clear()
+	for _, file := range files {
+		fileList.AddItem(file, "", 0, nil)
+	}
+	return files, nil // Return the slice of file names
+}
+
+func (tv *tviewApp) createChatHistorySelectionModal(selectedFileChan chan string) {
+	fileList := tview.NewList()
+	chatHistoryFiles, err := tv.refreshFileList(fileList) // Capture the returned slice
+	if err != nil {
+		log.Printf("Error refreshing file list: %v", err)
+		tv.progressView.SetText(fmt.Sprintf("Error refreshing chat history files: %v", err))
+		selectedFileChan <- ""
 		return
 	}
 
-	// Create a list to display the chat history files
-	fileList := tview.NewList()
-	for _, file := range chatHistoryFiles {
-		fileList.AddItem(file, "", 0, nil)
-	}
 	fileList.SetBorder(true).SetTitle("Select Chat History File (ESC to exit)")
-
-	// Create a flex layout for the modal
-	modal := tview.NewFlex().
-		SetDirection(tview.FlexRow).
-		AddItem(fileList, 0, 1, true)
-
 	// Create a function to close the modal and reset the UI
 	closeModal := func() {
-		tv.app.SetInputCapture(nil)   // undo the override of the TAB and ESC key
-		tv.app.SetRoot(tv.flex, true) // Restore original layout
+		tv.app.SetInputCapture(nil)                     // undo the override of the TAB and ESC key
+		tv.pages.RemovePage(fileSelectionModalPageName) // Remove the modal from pages
+		tv.pages.RemovePage(confirmationPageName)       // Remove confirmation page if it exist
+		tv.app.SetRoot(tv.flex, true)                   // Restore original layout
 	}
+
+	selectButton := tview.NewButton("Select").SetSelectedFunc(func() {
+		index := fileList.GetCurrentItem()
+		selectedFileChan <- chatHistoryFiles[index] // Send selected file
+		log.Printf("Selected chat history file: %s", chatHistoryFiles[index])
+		closeModal()
+		tv.pages = tv.pages.RemovePage(fileSelectionModalPageName) // Close the modal
+		tv.app.SetRoot(tv.flex, true)
+	})
+
+	var filenameToBeDeleted string
+
+	confirmationModal := tview.NewModal().
+		SetText("Are you sure you want to delete this file?").
+		AddButtons([]string{"Yes", "No"}).
+		SetDoneFunc(func(buttonIndex int, buttonLabel string) {
+			if buttonLabel == "Yes" {
+
+				index := fileList.GetCurrentItem()
+				if index >= 0 && index < len(chatHistoryFiles) {
+					err := os.Remove(filepath.Join(getChatHistoryFolder(), chatHistoryFiles[index]))
+					if err != nil {
+						log.Printf("Error deleting chat history file: %v", err)
+						// Consider showing an error message to the user
+					}
+					log.Printf("Deleted chat history file: %s", chatHistoryFiles[index])
+				}
+			}
+
+			// Refresh the fileList
+			if _, err := tv.refreshFileList(fileList); err != nil {
+				log.Printf("Error refreshing file list: %v", err)
+				// Consider showing an error message to the user
+			}
+			tv.pages = tv.pages.SwitchToPage(fileSelectionModalPageName)
+		})
+	confirmationModal.Box.SetBorder(true).
+		SetRect(10, 10, 30, 5)
+
+	deleteButton := tview.NewButton("Delete").SetSelectedFunc(func() {
+		index := fileList.GetCurrentItem()
+		if index >= 0 && index < len(chatHistoryFiles) {
+			filenameToBeDeleted = chatHistoryFiles[index] // Store the filename
+			confirmationText := fmt.Sprintf("Are you sure you want to delete:\n '%s'?", filenameToBeDeleted)
+			confirmationModal.SetText(confirmationText) // Update the modal text
+		} else {
+			filenameToBeDeleted = "" //Clear previous text
+			confirmationModal.SetText("Invalid file selected. Cannot proceed with deletion.")
+			log.Println("Invalid file index selected")
+		}
+		tv.pages = tv.pages.SwitchToPage("confirmation")
+		tv.app.SetRoot(tv.pages, true)
+	})
+	// Create buttons for selecting or deleting a file
+	buttons := tview.NewFlex().
+		AddItem(selectButton, 0, 1, true).
+		AddItem(deleteButton, 0, 1, true)
+
+		// Create a flex layout for the modal
+	modal := tview.NewFlex().
+		SetDirection(tview.FlexRow).
+		AddItem(fileList, 0, 1, true).
+		AddItem(buttons, 1, 1, false)
 
 	// Handle file selection
 	fileList.SetSelectedFunc(func(index int, mainText, secondaryText string, shortcut rune) {
@@ -144,8 +230,10 @@ func (tv *tviewApp) createChatHistorySelectionModal(selectedFileChan chan string
 		switch event.Key() {
 		case tcell.KeyTAB:
 			if tv.app.GetFocus() == fileList {
-				tv.app.SetFocus(nil) // Focus on buttons if we add buttons
-			} else {
+				tv.app.SetFocus(selectButton)
+			} else if tv.app.GetFocus() == selectButton {
+				tv.app.SetFocus(deleteButton)
+			} else if tv.app.GetFocus() == deleteButton {
 				tv.app.SetFocus(fileList)
 			}
 			return nil // Consume the event
@@ -157,8 +245,14 @@ func (tv *tviewApp) createChatHistorySelectionModal(selectedFileChan chan string
 		return event // Pass other events through
 	})
 
+	// Add the modal to the pages
+	tv.pages = tv.pages.AddPage(fileSelectionModalPageName, modal, true, true)
+	// Add the confirmation page to the pages
+	tv.pages = tv.pages.AddPage(confirmationPageName, confirmationModal, false, false)
+
 	// Set the modal as the root of the application
-	tv.app.SetRoot(modal, true)
+	tv.pages.SwitchToPage(fileSelectionModalPageName)
+	tv.app.SetRoot(tv.pages, true)
 }
 
 func (tv *tviewApp) SelectChatHistoryFile() {
