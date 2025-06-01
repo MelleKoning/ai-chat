@@ -26,7 +26,10 @@ type glamourRenderer struct {
 }
 
 func New() (GlamourRenderer, error) {
-	r, err := glamour.NewTermRenderer(glamour.WithStandardStyle("dracula"), glamour.WithWordWrap(120))
+	selectedStyle := glamour.WithStandardStyle("dark")
+
+	r, err := glamour.NewTermRenderer(selectedStyle,
+		glamour.WithWordWrap(120))
 	if err != nil {
 		return nil, err
 	}
