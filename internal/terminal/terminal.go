@@ -16,6 +16,8 @@ const backGroundBlack = "\033[40m"
 // const AttrReversed = "\033[7m"
 const colorCyan = "\033[36m"
 
+const CyanBackGroundWhiteForeground = "\033[44;37m"
+
 type GlamourRenderer interface {
 	GetRendered(string) (string, error)
 	FormatUserText(string, int) (string, error)
@@ -46,7 +48,7 @@ func (gr *glamourRenderer) GetRendered(str string) (string, error) {
 
 func (gr *glamourRenderer) FormatUserText(str string, historyLength int) (string, error) {
 	s := fmt.Sprintf(colorCyan+"History items: %d\n", historyLength)
-	s = s + str
+	s = s + fmt.Sprintf(CyanBackGroundWhiteForeground+"%s\n"+colorReset, str)
 	return s, nil
 }
 func PrintGlamourString(theString string) {
