@@ -2,9 +2,11 @@ package genaimodel
 
 import (
 	"context"
+	"errors"
 	"log"
 	"os"
 	"strings"
+	"sync"
 
 	// genai is the successor of the previous
 	// generative-ai-go model
@@ -12,7 +14,8 @@ import (
 )
 
 const (
-	modelName = "gemini-2.0-flash"
+	//modelName = "gemini-2.0-flash"
+	modelName = "gemini-2.5-flash-preview-05-20"
 )
 
 type theModel struct {
@@ -45,6 +48,7 @@ type Action interface {
 	StoreChatHistory(string) error
 	LoadChatHistory(string) ([]*genai.Content, error)
 	GenerateChatSummary() (string, error)
+	ListModels() (string, error)
 }
 
 // NewModel sets up the client for communication with Gemini. Ensure
@@ -67,6 +71,19 @@ func NewModel(ctx context.Context, systemInstruction string) (Action, error) {
 	}, err
 }
 
+func (m *theModel) ListModels() (string, error) {
+	models, err := m.client.Models.List(context.Background(), &genai.ListModelsConfig{})
+	if err != nil {
+		return "nil", err
+	}
+
+	var modelNames string
+	for _, model := range models.Items {
+		modelNames = modelNames + ", \n" + model.Name
+	}
+
+	return modelNames, nil
+}
 func (m *theModel) GetHistoryLength() int {
 	return len(m.chatHistory)
 }
@@ -74,6 +91,7 @@ func (m *theModel) UpdateSystemInstruction(systemInstruction string) {
 	m.systemInstruction = systemInstruction
 }
 
+/*
 // ChatMessage sends a message to the model
 // and returns the answer as string
 // Variables:
@@ -144,7 +162,18 @@ func (m *theModel) ChatMessage(userPrompt string,
 	for respChunk, err := range stream {
 		if err != nil {
 			log.Println("Error receiving stream:", err)
-
+			// Signal that the stream is complete
+			// to stop calling the callBack funcs for each chunk
+			go func() {
+				streamDone <- true
+			}()
+			select {
+			case _, ok := <-streamDone:
+				if !ok {
+					log.Println("streamDone channel is closed")
+				}
+			case <-time.After(2 * time.Second):
+			}
 			return ChatResult{}, err
 		}
 		part := respChunk.Candidates[0].Content.Parts[0]
@@ -164,6 +193,121 @@ func (m *theModel) ChatMessage(userPrompt string,
 
 	log.Println("chat response generated")
 	return ChatResult{chatResponse, chunkCount}, nil
+}
+*/
+// ChatMessage sends a message to the model
+// and returns the answer as string
+// Variables:
+// userPrompt: the prompt to send to the model
+// onChunk: a callback function that is called for each chunk of the response
+func (m *theModel) ChatMessage(userPrompt string, onChunk func(string)) (ChatResult, error) {
+	// Use context for cancellation. This is the primary way to signal goroutines to stop.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel() // Ensure context is cancelled when ChatMessage returns, signaling cleanup
+
+	// Create a buffered channel to process chunks.
+	chunkChan := make(chan string, 100)
+
+	// Use a WaitGroup to ensure the chunk processing goroutine finishes before `ChatMessage` exits.
+	var wg sync.WaitGroup
+
+	// Start the chunk processing goroutine by calling the new extracted function
+	m.startChunkProcessor(ctx, &wg, chunkChan, onChunk)
+
+	// Add user prompt to chat history
+	m.chatHistory = append(m.chatHistory, genai.NewContentFromText(userPrompt, genai.RoleUser))
+
+	// Create chat with history
+	chat, err := m.client.Chats.Create(ctx, modelName, nil, m.chatHistory)
+	if err != nil {
+		// If chat creation fails, immediately return and cancel context.
+		close(chunkChan)
+		wg.Wait()
+		return ChatResult{}, err
+	}
+
+	// Send message to the model using streaming
+	stream := chat.SendMessageStream(ctx, genai.Part{Text: userPrompt})
+
+	var fullString strings.Builder
+	var chunkCount int
+	var streamErr error // to capture a streamErr if it occurs
+	// Loop through the stream responses.
+	// The `stream` channel itself often handles closing when the API call is done
+	// or an error occurs.
+	for respChunk, err := range stream { // Iterate without checking 'err' in the range clause itself
+		if err != nil {
+			log.Println("Error receiving stream:", err)
+			streamErr = err
+			break // exit the loop
+		}
+		// defensive check on received respChunk
+		if respChunk == nil || len(respChunk.Candidates) == 0 || respChunk.Candidates[0].Content == nil || len(respChunk.
+			Candidates[0].Content.Parts) == 0 {
+			log.Println("Received nil or malformed chunk from stream (no explicit error reported).")
+			// Decide how to handle this. You might want to treat it as an error and break,
+			// or just skip this malformed chunk if acceptable.
+			// For robustness, treating it as an error is safer:
+			streamErr = errors.New("received malformed chunk data")
+			break
+		}
+		part := respChunk.Candidates[0].Content.Parts[0] // Potential nil dereference if respChunk is nil!
+		chunkChan <- part.Text                           // Send chunk to channel
+		fullString.WriteString(part.Text)
+		chunkCount++
+	}
+	close(chunkChan)
+	// Wait for the chunk processing goroutine to finish its cleanup.
+	wg.Wait()
+
+	if streamErr != nil {
+		log.Println("Returning error from ChatMessage due to stream issue.")
+		return ChatResult{}, streamErr
+	}
+
+	chatResponse := fullString.String()
+	modelResponse := genai.NewContentFromText(chatResponse, genai.RoleModel)
+	m.chatHistory = append(m.chatHistory, modelResponse)
+
+	return ChatResult{chatResponse, chunkCount}, nil
+}
+
+// startChunkProcessor starts a goroutine to process chat chunks,
+// handling cancellation via context and signaling completion via WaitGroup.
+// It also ensures any remaining buffered chunks are consumed on shutdown.
+func (m *theModel) startChunkProcessor(ctx context.Context,
+	wg *sync.WaitGroup,
+	chunkChan <-chan string,
+	onChunk func(string)) {
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+
+		// This defer will drain the channel *after* the select loop exits.
+		// It ensures no deadlocks if the sender closes the channel while chunks are still buffered.
+		defer func() {
+			for range chunkChan {
+				// Keep consuming the channel until it's closed,
+				// ensuring any remaining buffered chunks are processed or discarded.
+			}
+			log.Println("Chunk processing goroutine finished draining.")
+		}()
+
+		for {
+			select {
+			case chunk, ok := <-chunkChan:
+				if !ok { // Channel was closed by the sender
+					log.Println("Chunk processing goroutine: Chunk channel closed, exiting.")
+					return // Exit the select loop, then run the draining defer
+				}
+				onChunk(chunk)
+
+			case <-ctx.Done(): // Context cancelled (signal to stop)
+				log.Println("Chunk processing goroutine: Context cancelled, exiting.")
+				return // Exit the select loop, then run the draining defer
+			}
+		}
+	}()
 }
 
 func (m *theModel) SendSystemPrompt(onChunk func(string)) (ChatResult, error) {
