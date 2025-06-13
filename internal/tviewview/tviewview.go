@@ -163,6 +163,7 @@ func (tv *tviewApp) createDropDown() {
 			"Select system prompt",
 			"Store Chat History",
 			"Load Chat History",
+			"ListModels",
 			"Exit"}, func(option string, index int) {
 			switch option {
 			case "Exit":
@@ -184,6 +185,11 @@ func (tv *tviewApp) createDropDown() {
 
 			case "Load Chat History":
 				tv.SelectChatHistoryFile()
+
+			case "ListModels":
+				go func() {
+					tv.UpdateOutputView(tv.aimodel.ListModels())
+				}()
 			}
 		}).SetDoneFunc(func(key tcell.Key) {
 		if key == tcell.KeyTAB {

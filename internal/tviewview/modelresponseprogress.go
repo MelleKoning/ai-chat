@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/MelleKoning/ai-chat/internal/genaimodel"
@@ -17,6 +18,33 @@ type ProgressData struct {
 	elapsedTime     time.Duration
 	startTime       time.Time
 	chunksPerSecond float64
+}
+
+// startSpinner is a helper function to show a spinner in the terminal
+func (p *ModelResponseProgress) startSpinnerGoroutine(stopChan chan struct{}) {
+	chars := `⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏`
+	spinnerRunes := []rune(chars)
+	i := 0
+	for {
+		select {
+		case <-stopChan:
+			// Clear the spinner line before exiting
+			/*p.tv.app.QueueUpdateDraw(func() {
+				p.tv.outputView.SetText(p.originalOutputViewContents) // reset back
+			})*/
+			return
+		default:
+			elapsedMs := time.Since(p.progressData.startTime).Milliseconds() // Calculate elapsed milliseconds
+
+			p.tv.app.QueueUpdateDraw(func() {
+				thinkingString := p.userCommandRendered +
+					fmt.Sprintf("Thinking... %c (%dMs)", spinnerRunes[i], elapsedMs)
+				p.tv.outputView.SetText(thinkingString)
+			})
+			i = (i + 1) % len(spinnerRunes)
+			time.Sleep(49 * time.Millisecond)
+		}
+	}
 }
 
 func (pd *ProgressData) Update(chunk string) {
@@ -53,9 +81,11 @@ func (pd *ProgressData) String() string {
 type ModelResponseProgress struct {
 	progressData               ProgressData
 	originalOutputViewContents string
-	// added to for each chunk
-	chunksReceived strings.Builder
-	tv             *tviewApp
+	userCommandRendered        string
+	chunksReceived             strings.Builder
+	tv                         *tviewApp
+	StopSpinner                chan struct{}
+	closeSpinnerOnce           sync.Once
 }
 
 func (p *ModelResponseProgress) StartCommand() {
@@ -73,6 +103,9 @@ func (p *ModelResponseProgress) StartCommand() {
 
 }
 
+// appendUserCommandToOutput appends the user command to the output view
+// this is important so that the originalOutput also contains the
+// user command
 func (p *ModelResponseProgress) appendUserCommandToOutput(command string) {
 	p.tv.app.SetFocus(p.tv.progressView) // remove highlight from button
 	txtRendered, err := p.tv.mdRenderer.FormatUserText(command,
@@ -81,6 +114,7 @@ func (p *ModelResponseProgress) appendUserCommandToOutput(command string) {
 		log.Print(err)
 	}
 	txtRendered = tview.TranslateANSI(txtRendered)
+	p.userCommandRendered = txtRendered
 	var sb strings.Builder
 	sb.WriteString(p.tv.outputView.GetText(false))
 	sb.WriteString(txtRendered)
@@ -110,6 +144,12 @@ func (p *ModelResponseProgress) runModelCommand(command string) {
 // we can safely write to all the UI elements because
 // this func is already called from QueueUpdateDraw
 func (p *ModelResponseProgress) handleFinalModelResult(result genaimodel.ChatResult, chatErr error) {
+	// Ensure the spinner is stopped, even if no chunks were received (onChunkReceived was never called).
+	// This is safe due to sync.Once; it will only execute if it hasn't already been executed by onChunkReceived.
+	p.closeSpinnerOnce.Do(func() {
+		close(p.StopSpinner)
+	})
+
 	if chatErr != nil {
 		p.tv.outputView.SetText(p.tv.outputView.GetText(false) + result.Response + "\n" + chatErr.Error())
 	} else {
@@ -128,21 +168,26 @@ func (p *ModelResponseProgress) startProgress() {
 		startTime: time.Now(),
 	}
 	p.chunksReceived = strings.Builder{}
+	p.StopSpinner = make(chan struct{})       // Create a NEW channel for each command
+	p.closeSpinnerOnce = sync.Once{}          // IMPORTANT: Reinitialize sync.Once for each command
+	go p.startSpinnerGoroutine(p.StopSpinner) // Start the spinner goroutine with the new channel
 }
 
 func (p *ModelResponseProgress) onChunkReceived(chunk string) {
+	p.closeSpinnerOnce.Do(func() {
+		close(p.StopSpinner)
+	})
 	p.progressData.Update(chunk)
 	p.chunksReceived.WriteString(chunk)
 	renderedProgress, _ := p.tv.mdRenderer.GetRendered(p.chunksReceived.String())
 	tviewProgressRendered := tview.TranslateANSI(renderedProgress)
-	p.updateUI(tviewProgressRendered)
+	p.updateUI(p.userCommandRendered + "\n" + tviewProgressRendered)
 }
 
 func (p *ModelResponseProgress) updateUI(txtRendered string) {
 	p.progressData.elapsedTime = time.Since(p.progressData.startTime)
 	p.tv.app.QueueUpdateDraw(func() {
 		p.tv.progressView.SetText(p.progressData.String())
-		//p.tv.outputView.SetText(p.originalOutputViewContents + txtRendered)
 		p.tv.outputView.SetText(txtRendered)
 	})
 }
