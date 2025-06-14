@@ -91,115 +91,24 @@ func (m *theModel) UpdateSystemInstruction(systemInstruction string) {
 	m.systemInstruction = systemInstruction
 }
 
-/*
 // ChatMessage sends a message to the model
 // and returns the answer as string
 // Variables:
 // userPrompt: the prompt to send to the model
 // onChunk: a callback function that is called for each chunk of the response
-func (m *theModel) ChatMessage(userPrompt string,
-	onChunk func(string)) (ChatResult, error) {
-	ctx := context.Background()
-
-	// Create a buffered channel to process chunks.
-	// The buffer size is set to 100 to avoid blocking the stream processing goroutine.
-	chunkChan := make(chan string, 100)
-
-	// streamDone is used to indicate stream completion.
-	// To communicate the final result back at the end
-	streamDone := make(chan bool)
-	defer close(streamDone)
-
-	// Start a goroutine to process chunks
-	go func() {
-		defer func() {
-			// Drain any remaining chunks in the channel before exiting
-			// in case stream is done and we want to return early
-			for range chunkChan {
-				//Keep consuming the channel.
-			}
-		}()
-		for {
-			select {
-			case chunk := <-chunkChan:
-				// The callback func which renders intermediate cunks
-				// on the UI could take longer
-				// then the full processing of the stream response, that is
-				// why we have a separate goroutine to process the chunks
-				onChunk(chunk)
-			case <-streamDone:
-				// Stream is complete, exit the loop
-				return
-			}
-		}
-	}()
-
-	// setup defer to close the channel
-	defer func() {
-		// closing the chunkChan can result that not all
-		// chunks are sent to the callback func but that
-		// is all right because the stream is complete, will
-		// return the full response which will be rendered
-		// in the UI
-		close(chunkChan)
-
-	}()
-
-	// Add user prompt to chat history
-	m.chatHistory = append(m.chatHistory, genai.NewContentFromText(userPrompt, genai.RoleUser))
-
-	// Create chat with history
-	chat, err := m.client.Chats.Create(ctx, modelName, nil, m.chatHistory)
-	if err != nil {
-		return ChatResult{}, err
-	}
-
-	// Send message to the model using streaming
-	stream := chat.SendMessageStream(ctx, genai.Part{Text: userPrompt})
-
-	var fullString strings.Builder
-	var chunkCount int
-	for respChunk, err := range stream {
-		if err != nil {
-			log.Println("Error receiving stream:", err)
-			// Signal that the stream is complete
-			// to stop calling the callBack funcs for each chunk
-			go func() {
-				streamDone <- true
-			}()
-			select {
-			case _, ok := <-streamDone:
-				if !ok {
-					log.Println("streamDone channel is closed")
-				}
-			case <-time.After(2 * time.Second):
-			}
-			return ChatResult{}, err
-		}
-		part := respChunk.Candidates[0].Content.Parts[0]
-		chunkChan <- part.Text // send chunk to channel
-		fullString.WriteString(part.Text)
-		chunkCount++
-	}
-
-	// Signal that the stream is complete
-	// to stop calling the callBack funcs for each chunk
-	streamDone <- true
-
-	chatResponse := fullString.String()
-	// Add the combined response to chat history
-	modelResponse := genai.NewContentFromText(chatResponse, genai.RoleModel)
-	m.chatHistory = append(m.chatHistory, modelResponse)
-
-	log.Println("chat response generated")
-	return ChatResult{chatResponse, chunkCount}, nil
-}
-*/
-// ChatMessage sends a message to the model
-// and returns the answer as string
-// Variables:
-// userPrompt: the prompt to send to the model
-// onChunk: a callback function that is called for each chunk of the response
+// The ChatMessage func is taking a userPrompt which is send off to
+// the aimodel. Then the aimodel is going to answer in chunks. Every chunk
+// received is going to be presented in the callback func " onChunk".
+// It can be that the processing of that callback takes a bit of time for
+//
+//	the UI to render it on the UI. This is why there is a buffer
+//
+// created, so that if multiple chunks arrive, and the processing
+// takes too much time, we can "cut-off" processing and immediately
+// send back the aggregated result (final result) to the caller. At that
+//
+//	moment, any remaining chunks are going to be consumed
+//	and not raised in the callback.
 func (m *theModel) ChatMessage(userPrompt string, onChunk func(string)) (ChatResult, error) {
 	// Use context for cancellation. This is the primary way to signal goroutines to stop.
 	ctx, cancel := context.WithCancel(context.Background())
@@ -212,73 +121,6 @@ func (m *theModel) ChatMessage(userPrompt string, onChunk func(string)) (ChatRes
 	var wg sync.WaitGroup
 
 	// Start the chunk processing goroutine by calling the new extracted function
-	m.startChunkProcessor(ctx, &wg, chunkChan, onChunk)
-
-	// Add user prompt to chat history
-	m.chatHistory = append(m.chatHistory, genai.NewContentFromText(userPrompt, genai.RoleUser))
-
-	// Create chat with history
-	chat, err := m.client.Chats.Create(ctx, modelName, nil, m.chatHistory)
-	if err != nil {
-		// If chat creation fails, immediately return and cancel context.
-		close(chunkChan)
-		wg.Wait()
-		return ChatResult{}, err
-	}
-
-	// Send message to the model using streaming
-	stream := chat.SendMessageStream(ctx, genai.Part{Text: userPrompt})
-
-	var fullString strings.Builder
-	var chunkCount int
-	var streamErr error // to capture a streamErr if it occurs
-	// Loop through the stream responses.
-	// The `stream` channel itself often handles closing when the API call is done
-	// or an error occurs.
-	for respChunk, err := range stream { // Iterate without checking 'err' in the range clause itself
-		if err != nil {
-			log.Println("Error receiving stream:", err)
-			streamErr = err
-			break // exit the loop
-		}
-		// defensive check on received respChunk
-		if respChunk == nil || len(respChunk.Candidates) == 0 || respChunk.Candidates[0].Content == nil || len(respChunk.
-			Candidates[0].Content.Parts) == 0 {
-			log.Println("Received nil or malformed chunk from stream (no explicit error reported).")
-			// Decide how to handle this. You might want to treat it as an error and break,
-			// or just skip this malformed chunk if acceptable.
-			// For robustness, treating it as an error is safer:
-			streamErr = errors.New("received malformed chunk data")
-			break
-		}
-		part := respChunk.Candidates[0].Content.Parts[0] // Potential nil dereference if respChunk is nil!
-		chunkChan <- part.Text                           // Send chunk to channel
-		fullString.WriteString(part.Text)
-		chunkCount++
-	}
-	close(chunkChan)
-	// Wait for the chunk processing goroutine to finish its cleanup.
-	wg.Wait()
-
-	if streamErr != nil {
-		log.Println("Returning error from ChatMessage due to stream issue.")
-		return ChatResult{}, streamErr
-	}
-
-	chatResponse := fullString.String()
-	modelResponse := genai.NewContentFromText(chatResponse, genai.RoleModel)
-	m.chatHistory = append(m.chatHistory, modelResponse)
-
-	return ChatResult{chatResponse, chunkCount}, nil
-}
-
-// startChunkProcessor starts a goroutine to process chat chunks,
-// handling cancellation via context and signaling completion via WaitGroup.
-// It also ensures any remaining buffered chunks are consumed on shutdown.
-func (m *theModel) startChunkProcessor(ctx context.Context,
-	wg *sync.WaitGroup,
-	chunkChan <-chan string,
-	onChunk func(string)) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -308,6 +150,72 @@ func (m *theModel) startChunkProcessor(ctx context.Context,
 			}
 		}
 	}()
+	// Add user prompt to chat history
+	m.chatHistory = append(m.chatHistory, genai.NewContentFromText(userPrompt, genai.RoleUser))
+
+	// Create chat with history
+	chat, err := m.client.Chats.Create(ctx, modelName, nil, m.chatHistory)
+	if err != nil {
+		// If chat creation fails, immediately return and cancel context.
+		cancel()
+		close(chunkChan)
+		wg.Wait()
+		return ChatResult{}, err
+	}
+
+	// Send message to the model using streaming
+	stream := chat.SendMessageStream(ctx, genai.Part{Text: userPrompt})
+	var fullString strings.Builder
+	var chunkCount int
+	var streamErr error // to capture a streamErr if it occurs
+	// Loop through the stream responses.
+	// The `stream` channel itself often handles closing when the API call is done
+	// or an error occurs.
+	for respChunk, err := range stream { // Iterate without checking 'err' in the range clause itself
+		if err != nil {
+			log.Println("Error receiving stream:", err)
+			streamErr = err
+			break // exit the loop
+		}
+		// defensive check on received respChunk
+		if respChunk == nil || len(respChunk.Candidates) == 0 || respChunk.Candidates[0].Content == nil || len(respChunk.
+			Candidates[0].Content.Parts) == 0 {
+			log.Println("Received nil or malformed chunk from stream (no explicit error reported).")
+			// Decide how to handle this. You might want to treat it as an error and break,
+			// or just skip this malformed chunk if acceptable.
+			// For robustness, treating it as an error is safer:
+			streamErr = errors.New("received malformed chunk data")
+			break
+		}
+		part := respChunk.Candidates[0].Content.Parts[0] // Potential nil dereference if respChunk is nil!
+		select {
+		case chunkChan <- part.Text:
+			// Send chunk to channel
+		default:
+			// If channel and channel buffer is full, discard
+			// sending the chunk to the channelprocess - the UI
+			// is simply too slow to keep up, but will eventually
+			// get the final result
+		}
+		fullString.WriteString(part.Text)
+		chunkCount++
+	}
+
+	cancel()         // Signal the goroutine to stop processing chunks
+	close(chunkChan) // Close the channel
+	// Wait for the chunk processing goroutine to finish its cleanup.
+	wg.Wait()
+
+	if streamErr != nil {
+		log.Println("Returning error from ChatMessage due to stream issue.")
+		return ChatResult{}, streamErr
+	}
+
+	chatResponse := fullString.String()
+	modelResponse := genai.NewContentFromText(chatResponse, genai.RoleModel)
+	m.chatHistory = append(m.chatHistory, modelResponse)
+
+	return ChatResult{chatResponse, chunkCount}, nil
 }
 
 func (m *theModel) SendSystemPrompt(onChunk func(string)) (ChatResult, error) {
