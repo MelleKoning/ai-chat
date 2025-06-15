@@ -9,13 +9,6 @@ import (
 	"google.golang.org/genai"
 )
 
-// ModelMetadataServiceAPI abstracts genai.Models (for List, Get, etc.)
-// This is for model metadata, NOT content generation.
-type ModelMetadataServiceAPI interface {
-	List(ctx context.Context, cfg *genai.ListModelsConfig) (genai.Page[genai.Model], error)
-	// Add other *genai.Models methods if needed, e.g., Get()
-}
-
 // ChatSessionAPI abstracts *genai.Chat (the actual chat session after creation)
 type ChatSessionAPI interface {
 	// SendMessageStream is the method on the *genai.Chat instance
@@ -34,6 +27,7 @@ type ChatCreateServiceAPI interface {
 // This is for direct model interaction (non-chat based generation, embeddings, etc.)
 type ModelServiceAPI interface {
 	GenerateContentStream(ctx context.Context, model string, contents []*genai.Content, config *genai.GenerateContentConfig) iter.Seq2[*genai.GenerateContentResponse, error]
+	List(ctx context.Context, cfg *genai.ListModelsConfig) (genai.Page[genai.Model], error)
 }
 
 // FileServiceAPI abstracts *genai.Files
@@ -45,9 +39,8 @@ type FileServiceAPI interface {
 // GeminiClientAPI is the top-level interface for our wrapper around *genai.Client.
 // All its methods return the specific sub-service interfaces.
 type GeminiClientAPI interface {
-	GetModelsService() ModelMetadataServiceAPI
-	GetChatCreateService() ChatCreateServiceAPI            // Corrected name: factory for creating chats
-	GetGenerativeModelService(name string) ModelServiceAPI // This one takes a model name
+	GetModelsService() ModelServiceAPI
+	GetChatCreateService() ChatCreateServiceAPI // Corrected name: factory for creating chats
 	GetFileService() FileServiceAPI
 	// Close() error // Add if you need to close the client.
 }
@@ -77,13 +70,9 @@ func (w *chatCreateServiceWrapper) Create(ctx context.Context, model string, con
 	return &chatSessionWrapper{chat: concreteChat}, nil
 }
 
-type modelMetadataServiceWrapper struct {
-	models *genai.Models
-}
-
-func (w *modelMetadataServiceWrapper) List(ctx context.Context, cfg *genai.ListModelsConfig) (genai.Page[genai.
+func (w *modelServiceWrapper) List(ctx context.Context, cfg *genai.ListModelsConfig) (genai.Page[genai.
 	Model], error) {
-	return w.models.List(ctx, cfg)
+	return w.genModel.List(ctx, cfg)
 }
 
 type modelServiceWrapper struct {
@@ -111,16 +100,12 @@ type genaiClientWrapper struct {
 	client *genai.Client
 }
 
-func (w *genaiClientWrapper) GetModelsService() ModelMetadataServiceAPI {
-	return &modelMetadataServiceWrapper{models: w.client.Models}
+func (w *genaiClientWrapper) GetModelsService() ModelServiceAPI {
+	return &modelServiceWrapper{genModel: w.client.Models}
 }
 
 func (w *genaiClientWrapper) GetChatCreateService() ChatCreateServiceAPI {
 	return &chatCreateServiceWrapper{chats: w.client.Chats}
-}
-
-func (w *genaiClientWrapper) GetGenerativeModelService(name string) ModelServiceAPI {
-	return &modelServiceWrapper{genModel: w.client.Models}
 }
 
 func (w *genaiClientWrapper) GetFileService() FileServiceAPI {
