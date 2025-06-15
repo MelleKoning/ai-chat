@@ -51,24 +51,21 @@ type Action interface {
 	ListModels() (string, error)
 }
 
-// NewModel sets up the client for communication with Gemini. Ensure
-// You need to have set your api key in env var GEMINI_API_KEY before
-// calling the NewModel constructor
-func NewModel(ctx context.Context, systemInstruction string) (Action, error) {
-	apiKey := os.Getenv("GEMINI_API_KEY")
-
-	genaiclient, err := genai.NewClient(ctx, &genai.ClientConfig{
+func NewGeminiClient(ctx context.Context, apiKey string) (*genai.Client, error) {
+	return genai.NewClient(ctx, &genai.ClientConfig{
 		APIKey:  apiKey,
 		Backend: genai.BackendGeminiAPI,
 	})
-	if err != nil {
-		return nil, err
-	}
+}
+
+func NewModel(ctx context.Context,
+	genaiClient *genai.Client,
+	systemInstruction string) (Action, error) {
 
 	return &theModel{
 		systemInstruction: systemInstruction,
-		client:            genaiclient,
-	}, err
+		client:            genaiClient,
+	}, nil
 }
 
 func (m *theModel) ListModels() (string, error) {

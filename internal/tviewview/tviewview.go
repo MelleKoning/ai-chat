@@ -108,7 +108,7 @@ func (tv *tviewApp) createOutputView() {
 	tv.outputView.SetBorder(false).
 		SetFocusFunc(func() {
 			tv.titleView.SetTextColor(tcell.ColorWhite)
-			tv.titleView.SetBackgroundColor(tcell.ColorDarkBlue)
+			tv.titleView.SetBackgroundColor(tcell.ColorDarkMagenta)
 		}).SetBlurFunc(func() {
 		tv.titleView.SetTextColor(tcell.ColorGray)
 		tv.titleView.SetBackgroundColor(tcell.ColorDarkBlue)
