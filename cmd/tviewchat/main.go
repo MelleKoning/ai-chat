@@ -20,9 +20,20 @@ func main() {
 
 	systemPrompt := `Be a supportive technical assistant.`
 
-	ctx := context.Background()
-	modelAction, _ := genaimodel.NewModel(ctx, systemPrompt)
+	apiKey := os.Getenv("GEMINI_API_KEY")
+	if apiKey == "" {
+		log.Fatal("Error: GEMINI_API_KEY environment variable not set. Please set it before running.")
+	}
 
+	ctx := context.Background()
+	genaiClient, err := genaimodel.NewGeminiClient(ctx, apiKey)
+	if err != nil {
+		log.Fatal("Error creating Gemini client: ", err)
+	}
+	modelAction, err := genaimodel.NewModel(ctx, genaiClient, systemPrompt)
+	if err != nil {
+		log.Fatal("Error creating AI model: ", err)
+	}
 	// Create the console view
 	tviewApp := tviewview.New(mdRenderer, modelAction)
 
