@@ -204,8 +204,11 @@ func (m *theModel) ChatMessage(userPrompt string, onChunk func(string)) (ChatRes
 	wg.Wait()
 
 	if streamErr != nil {
-		log.Println("Returning error from ChatMessage due to stream issue.")
-		return ChatResult{}, streamErr
+		log.Printf("Stream error: %v\n", streamErr)
+		return ChatResult{
+			Response:   fullString.String(),
+			ChunkCount: chunkCount,
+		}, streamErr
 	}
 
 	chatResponse := fullString.String()
