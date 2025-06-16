@@ -6,7 +6,7 @@ require (
 	github.com/charmbracelet/glamour v0.10.0
 	github.com/gdamore/tcell/v2 v2.7.1
 	github.com/rivo/tview v0.0.0-20250501113434-0c592cd31026
-	google.golang.org/genai v1.5.0
+	google.golang.org/genai v1.11.0
 )
 
 require (
