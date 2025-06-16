@@ -25,24 +25,33 @@ func (p *ModelResponseProgress) startSpinnerGoroutine(stopChan chan struct{}) {
 	chars := `⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏`
 	spinnerRunes := []rune(chars)
 	i := 0
+
+	// Create a ticker that fires every X milliseconds
+	// Adjust the duration for desired spinner speed. 75ms might be more visible than 49ms.
+	ticker := time.NewTicker(75 * time.Millisecond)
+	defer ticker.Stop() // Ensure the ticker is stopped when the goroutine exits
+
+	// --- IMPORTANT ADDITION ---
+	// Queue the very first spinner frame immediately, before entering the loop.
+	// This ensures that even if the first chunk comes back extremely fast (e.g., within 1ms),
+	// there's a chance for at least one spinner character to be queued and displayed.
+	p.tv.app.QueueUpdateDraw(func() {
+		p.tv.outputView.SetText(p.userCommandRendered)
+		thinkingString := fmt.Sprintf("Thinking... %c (%d)", spinnerRunes[0], 0)
+		p.tv.progressView.SetText(thinkingString)
+	})
 	for {
 		select {
 		case <-stopChan:
-			// Clear the spinner line before exiting
-			/*p.tv.app.QueueUpdateDraw(func() {
-				p.tv.outputView.SetText(p.originalOutputViewContents) // reset back
-			})*/
 			return
-		default:
-			elapsedMs := time.Since(p.progressData.startTime).Milliseconds() // Calculate elapsed milliseconds
+		case <-ticker.C:
+			elapsedDuration := time.Since(p.progressData.startTime)
 
 			p.tv.app.QueueUpdateDraw(func() {
-				thinkingString := p.userCommandRendered +
-					fmt.Sprintf("Thinking... %c (%dMs)", spinnerRunes[i], elapsedMs)
-				p.tv.outputView.SetText(thinkingString)
+				thinkingString := fmt.Sprintf("Thinking... %c (%s)", spinnerRunes[i], elapsedDuration.String())
+				p.tv.progressView.SetText(thinkingString)
 			})
 			i = (i + 1) % len(spinnerRunes)
-			time.Sleep(49 * time.Millisecond)
 		}
 	}
 }
@@ -121,19 +130,35 @@ func (p *ModelResponseProgress) appendUserCommandToOutput(command string) {
 	p.tv.outputView.SetText(sb.String())
 }
 
+// runModelCommand does a few things in a specific order:
+// 1. Perform an immediate UI update ( appendUserCommandToOutput ) on the main thread.
+// 2. Then, in a background goroutine, asynchronously get a snapshot of that UI state
+// for the originalOutputView, which requires  QueueUpdateDraw
+// to go back to the main thread).
+// 3. Manage ongoing streaming updates via p.onChunkReceived (each requiring  QueueUpdateDraw ).
+// 4. Finally, perform a concluding update ( QueueUpdateDraw ).
 func (p *ModelResponseProgress) runModelCommand(command string) {
 	p.appendUserCommandToOutput(command)
+	// Start async operationas for model call, spinner, final result handling
 	go func() {
+		p.tv.app.QueueUpdateDraw(func() {
+			// CRITICAL: Capture the outputView's content *after* the user command
+			// has been appended and processed by the main UI goroutine.
+			// This `GetText(false)` will now correctly contain the history + the user's command.
+			p.originalOutputViewContents = p.tv.outputView.GetText(false)
+
+			// Set focus to the progress view as part of the preparation for showing progress.
+			p.tv.app.SetFocus(p.tv.progressView)
+		})
+
 		p.startProgress()
 		// the callback -can- update the outputview for intermediate results
 		result, chatErr := p.tv.aimodel.ChatMessage(command, p.onChunkReceived)
-		// as we run in an async routine we have
-		// to use the QueueUpdateDraw for all following
-		// UI updates
+		// Final UI update after the model returns the result
 		p.tv.app.QueueUpdateDraw(func() {
 			p.tv.outputView.SetText(p.tv.progress.originalOutputViewContents) // reset back
 			p.handleFinalModelResult(result, chatErr)
-			// replace the command box
+			// clear the command area
 			p.tv.commandArea.Replace(0, len(command), "")
 		})
 	}()
@@ -163,7 +188,7 @@ func (p *ModelResponseProgress) handleFinalModelResult(result genaimodel.ChatRes
 	p.tv.app.SetFocus(p.tv.outputView)
 }
 func (p *ModelResponseProgress) startProgress() {
-	p.originalOutputViewContents = p.tv.outputView.GetText(false)
+	//p.originalOutputViewContents = p.tv.outputView.GetText(false)
 	p.progressData = ProgressData{
 		startTime: time.Now(),
 	}
