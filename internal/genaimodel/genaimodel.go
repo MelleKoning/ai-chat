@@ -20,7 +20,7 @@ const (
 
 type theModel struct {
 	systemInstruction string
-	client            *genai.Client
+	client            GeminiClientAPI
 	chatHistory       []*genai.Content
 }
 
@@ -51,15 +51,21 @@ type Action interface {
 	ListModels() (string, error)
 }
 
-func NewGeminiClient(ctx context.Context, apiKey string) (*genai.Client, error) {
-	return genai.NewClient(ctx, &genai.ClientConfig{
+func NewGeminiClient(ctx context.Context, apiKey string) (GeminiClientAPI, error) {
+	genaiClient, _ := genai.NewClient(ctx, &genai.ClientConfig{
 		APIKey:  apiKey,
 		Backend: genai.BackendGeminiAPI,
 	})
+
+	// we return wrapper to the genai client to support
+	// mocking the actual genaiClient
+	return &genaiClientWrapper{
+		client: genaiClient,
+	}, nil
 }
 
 func NewModel(ctx context.Context,
-	genaiClient *genai.Client,
+	genaiClient GeminiClientAPI,
 	systemInstruction string) (Action, error) {
 
 	return &theModel{
@@ -69,7 +75,7 @@ func NewModel(ctx context.Context,
 }
 
 func (m *theModel) ListModels() (string, error) {
-	models, err := m.client.Models.List(context.Background(), &genai.ListModelsConfig{})
+	models, err := m.client.Models().List(context.Background(), &genai.ListModelsConfig{})
 	if err != nil {
 		return "nil", err
 	}
@@ -151,7 +157,7 @@ func (m *theModel) ChatMessage(userPrompt string, onChunk func(string)) (ChatRes
 	m.chatHistory = append(m.chatHistory, genai.NewContentFromText(userPrompt, genai.RoleUser))
 
 	// Create chat with history
-	chat, err := m.client.Chats.Create(ctx, modelName, nil, m.chatHistory)
+	chat, err := m.client.ChatCreate().Create(ctx, modelName, nil, m.chatHistory)
 	if err != nil {
 		// If chat creation fails, immediately return and cancel context.
 		cancel()
@@ -224,7 +230,7 @@ func (m *theModel) SendSystemPrompt(onChunk func(string)) (ChatResult, error) {
 	m.chatHistory = append(m.chatHistory, genai.NewContentFromText(m.systemInstruction, genai.RoleModel))
 
 	// Create chat with history
-	chat, err := m.client.Chats.Create(ctx, modelName, nil, m.chatHistory)
+	chat, err := m.client.ChatCreate().Create(ctx, modelName, nil, m.chatHistory)
 	if err != nil {
 		return ChatResult{}, err
 	}
@@ -296,7 +302,7 @@ func (m *theModel) ReviewFile(onChunk func(string)) (string, error) {
 	// add the command text to the file contents
 	//genaiCommandText := genai.Text(commandText)
 	//genaiContents = append(genaiContents, genaiCommandText...)
-	stream := m.client.Models.GenerateContentStream(
+	stream := m.client.Models().GenerateContentStream(
 		context.Background(),
 		modelName,
 		genaiContents,
@@ -328,7 +334,7 @@ func (m *theModel) ReviewFile(onChunk func(string)) (string, error) {
 }
 
 // uploads a file to gemini
-func (m *theModel) addAFile(ctx context.Context, client *genai.Client) (*genai.Part, string) {
+func (m *theModel) addAFile(ctx context.Context, client GeminiClientAPI) (*genai.Part, string) {
 	// during the chat, we can continuously update the below file by providing
 	// a different diff. For example to get a diff for a golang repository,
 	// we can issue the following command:
@@ -342,7 +348,7 @@ func (m *theModel) addAFile(ctx context.Context, client *genai.Client) (*genai.P
 	if err != nil {
 		panic(err)
 	}
-	upFile, err := client.Files.Upload(ctx, fileContents, &genai.UploadFileConfig{
+	upFile, err := client.Files().Upload(ctx, fileContents, &genai.UploadFileConfig{
 		MIMEType: "text/plain",
 	})
 	if err != nil {
@@ -365,7 +371,7 @@ func buildString(resp []*genai.Part) string {
 func (m *theModel) GenerateChatSummary() (string, error) {
 	ctx := context.Background()
 
-	chat, err := m.client.Chats.Create(ctx, modelName, nil, m.chatHistory)
+	chat, err := m.client.ChatCreate().Create(ctx, modelName, nil, m.chatHistory)
 	if err != nil {
 		return "", err
 	}
@@ -376,8 +382,8 @@ func (m *theModel) GenerateChatSummary() (string, error) {
   Only respond with the summary for the filename`
 
 	// Send the message to the model
-	prt := &genai.Part{Text: prompt}
-	resp, err := chat.Send(ctx, prt) // Use SendMessage instead of SendMessageStream
+	prt := genai.Part{Text: prompt}
+	resp, err := chat.SendMessage(ctx, prt) // Use SendMessage instead of SendMessageStream
 	if err != nil {
 		return "", err
 	}

@@ -14,6 +14,7 @@ type ChatSessionAPI interface {
 	// SendMessageStream is the method on the *genai.Chat instance
 	SendMessageStream(ctx context.Context, parts ...genai.Part) iter.Seq2[*genai.GenerateContentResponse, error]
 	// Add other *genai.Chat methods if used, e.g., History()
+	SendMessage(ctx context.Context, parts ...genai.Part) (*genai.GenerateContentResponse, error)
 }
 
 // ChatCreateServiceAPI abstracts *genai.Chats (the factory for creating chat sessions)
@@ -39,9 +40,9 @@ type FileServiceAPI interface {
 // GeminiClientAPI is the top-level interface for our wrapper around *genai.Client.
 // All its methods return the specific sub-service interfaces.
 type GeminiClientAPI interface {
-	GetModelsService() ModelServiceAPI
-	GetChatCreateService() ChatCreateServiceAPI // Corrected name: factory for creating chats
-	GetFileService() FileServiceAPI
+	Models() ModelServiceAPI
+	ChatCreate() ChatCreateServiceAPI // Corrected name: factory for creating chats
+	Files() FileServiceAPI
 	// Close() error // Add if you need to close the client.
 }
 
@@ -53,6 +54,10 @@ type chatSessionWrapper struct {
 func (w *chatSessionWrapper) SendMessageStream(ctx context.Context, parts ...genai.Part) iter.Seq2[*genai.
 	GenerateContentResponse, error] {
 	return w.chat.SendMessageStream(ctx, parts...)
+}
+
+func (w *chatSessionWrapper) SendMessage(ctx context.Context, parts ...genai.Part) (*genai.GenerateContentResponse, error) {
+	return w.chat.SendMessage(ctx, parts...)
 }
 
 // Add other *genai.Chat methods here, wrapping them.
@@ -100,14 +105,14 @@ type genaiClientWrapper struct {
 	client *genai.Client
 }
 
-func (w *genaiClientWrapper) GetModelsService() ModelServiceAPI {
+func (w *genaiClientWrapper) Models() ModelServiceAPI {
 	return &modelServiceWrapper{genModel: w.client.Models}
 }
 
-func (w *genaiClientWrapper) GetChatCreateService() ChatCreateServiceAPI {
+func (w *genaiClientWrapper) ChatCreate() ChatCreateServiceAPI {
 	return &chatCreateServiceWrapper{chats: w.client.Chats}
 }
 
-func (w *genaiClientWrapper) GetFileService() FileServiceAPI {
+func (w *genaiClientWrapper) Files() FileServiceAPI {
 	return &fileServiceWrapper{files: w.client.Files}
 }
