@@ -217,6 +217,14 @@ func (m *theModel) ChatMessage(userPrompt string, onChunk func(string)) (ChatRes
 		}, streamErr
 	}
 
+	// If no stream error occurred, but chunkCount is 0, it means no content was received.
+	// This covers the scenario where the server closes the connection silently.
+	if chunkCount == 0 {
+		log.Println("Stream completed without explicit error but received no chunks. Returning error.")
+		// Do NOT add an empty model response to chat history.
+		return ChatResult{}, errors.New("model stream ended without producing any content")
+	}
+
 	chatResponse := fullString.String()
 	modelResponse := genai.NewContentFromText(chatResponse, genai.RoleModel)
 	m.chatHistory = append(m.chatHistory, modelResponse)
