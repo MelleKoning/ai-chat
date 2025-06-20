@@ -131,11 +131,13 @@ func (m *theModel) ChatMessage(userPrompt string, onChunk func(string)) (ChatRes
 		// This defer will drain the channel *after* the select loop exits.
 		// It ensures no deadlocks if the sender closes the channel while chunks are still buffered.
 		defer func() {
+			draintCount := 0
 			for range chunkChan {
 				// Keep consuming the channel until it's closed,
 				// ensuring any remaining buffered chunks are processed or discarded.
+				draintCount++
 			}
-			log.Println("Chunk processing goroutine finished draining.")
+			log.Printf("Chunk processing goroutine finished draining %d chunks.", draintCount)
 		}()
 
 		for {
