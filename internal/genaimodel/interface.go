@@ -1,5 +1,7 @@
+//go:generate mockgen -source=interface.go -self_package=$PWD -destination=mockinterface.go
 package genaimodel
 
+// -package=genaimodel -self_package=$PWD
 import (
 	"context"
 	"io"
