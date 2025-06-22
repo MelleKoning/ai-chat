@@ -50,12 +50,30 @@ You could also inspect changes that are not even committed yet by looking at git
 
 This way, you can review your code, update and enhance it before committing!
 
-Run the chat tool
+### Run the chat tool
 
+```bash
 > go run ./cmd/tviewchat/main.go
+```
 
 You can TAB to choose a systemPrompt. You can start a chat, but the goal is to choose "Reviewfile" in the dropdown.
 When you select that, the file-contents "gitdiff.txt" will be send to the gemini API for analyses, call the cloud API and show suggestions for the diff.
+
+#### Storing chats
+
+Added is the ability to store chats as history files. This is because the Gemini API is capable of a huge context window, so that you can later load the chat-history back and continue the conversation.
+
+
+Chats are stored in your home config folder, usually `~/.config/ai-chat/history`
+
+## Features not yet implemented
+
+There are several ideas to extend the code with some new features
+
+- Change the glamour model dynamically for other default colours
+- Cut down the history items as it seems there is a limit when sending history items
+- Dynamically choosing other Gemini models instead of hardcoded modelstring
+- More unit testing (oops) to assert the interaction of the model implementation and tview console app
 
 ## References
 
