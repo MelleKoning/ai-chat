@@ -85,10 +85,11 @@ Navigation in the UI goes via a few default keys:
 
 There are several ideas to extend the code with some new features
 
-- Change the glamour model dynamically for other default colours
-- Cut down the history items as it seems there is a limit when sending history items
-- Dynamically choosing other Gemini models instead of hardcoded modelstring
-- More unit testing (oops) to assert the interaction of the model implementation and tview console app
+[x] Copy to clipboard support (requires installation of xsel on linux systems)
+[ ] Change the glamour model dynamically for other default colours
+[ ] Cut down the history items as it seems there is a limit when sending history items
+[ ] Dynamically choosing other Gemini models instead of hardcoded modelstring
+[-] More unit testing (oops) to assert the interaction of the model implementation and tview console app
 
 ## References
 

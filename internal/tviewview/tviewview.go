@@ -1,10 +1,13 @@
 package tviewview
 
 import (
+	"fmt"
 	"log"
 
 	"github.com/MelleKoning/ai-chat/internal/genaimodel"
 	"github.com/MelleKoning/ai-chat/internal/terminal"
+
+	"github.com/atotto/clipboard"
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
@@ -145,6 +148,19 @@ func (tv *tviewApp) createOutputView() {
 
 				tv.toggleOutputView()
 				return nil // Consume the event
+
+			}
+			if event.Key() == tcell.KeyRune && event.Rune() == 'c' && event.Modifiers() == tcell.ModAlt {
+				// alt-C to copy text to clipboard
+				if tv.outputTextArea.HasSelection() {
+					selected, _, _ := tv.outputTextArea.GetSelection()
+					err := clipboard.WriteAll(selected)
+					if err != nil {
+						tv.progressView.SetText(fmt.Sprintf("Error copying to clipboard: %v", err))
+					}
+					tv.progressView.SetText("Copied to clipboard")
+				}
+				return nil
 			}
 			return event
 		}).SetBackgroundColor(tcell.ColorBlack)
@@ -152,7 +168,7 @@ func (tv *tviewApp) createOutputView() {
 	tv.outputTextArea.SetFocusFunc(func() {
 		tv.titleView.SetTextColor(tcell.ColorWhite)
 		tv.titleView.SetBackgroundColor(tcell.ColorDarkCyan)
-		tv.titleView.SetText("AI Chat <ESC to toggle view>")
+		tv.titleView.SetText("AI Chat <ESC to toggle view, ALT-C to copy to clipboard>")
 
 	}).SetBlurFunc(func() {
 		tv.titleView.SetTextColor(tcell.ColorGray)

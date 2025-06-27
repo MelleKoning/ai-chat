@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/MelleKoning/ai-chat/internal/fileio"
 	"github.com/MelleKoning/ai-chat/internal/genaimodel"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
@@ -25,7 +26,12 @@ const (
 
 func (tv *tviewApp) storeChatHistory() {
 	filename, _ := tv.GenerateChatHistoryFilename()
-	err := tv.aimodel.StoreChatHistory(filename)
+	jsonData, err := tv.aimodel.GetChatHistory()
+	if err != nil {
+		log.Printf("Error storing chat history: %v", err)
+		tv.progressView.SetText(fmt.Sprintf("Error storing chat history: %v", err))
+	}
+	err = fileio.StoreChatHistory(filename, jsonData)
 	if err != nil {
 		log.Printf("Error storing chat history: %v", err)
 		tv.progressView.SetText(fmt.Sprintf("Error storing chat history: %v", err))
@@ -54,7 +60,16 @@ func (tv *tviewApp) loadChatHistory(filename string) {
 		tv.progress.startProgress()
 		tv.outputView.Clear() // Clear the output view *before* starting the load
 	})
-	contentList, err := tv.aimodel.LoadChatHistory(filename)
+	jsonHistory, err := fileio.LoadChatHistory(filename)
+	if err != nil {
+		log.Printf("Error loading chat history: %v", err)
+		tv.app.QueueUpdate(func() {
+			tv.progressView.SetText(fmt.Sprintf("Error loading chat history: %v", err))
+		})
+
+		return
+	}
+	contentList, err := tv.aimodel.LoadChatHistory(jsonHistory)
 	if err != nil {
 		log.Printf("Error loading chat history: %v", err)
 		tv.app.QueueUpdate(func() {
