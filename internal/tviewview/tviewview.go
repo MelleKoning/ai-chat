@@ -1,27 +1,40 @@
 package tviewview
 
 import (
+	"fmt"
+	"log"
+
 	"github.com/MelleKoning/ai-chat/internal/genaimodel"
 	"github.com/MelleKoning/ai-chat/internal/terminal"
+
+	"github.com/atotto/clipboard"
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )
 
+const (
+	PAGEISVIEW = "PAGEISVIEW"
+	PAGEISEDIT = "PAGEISEDIT"
+)
+
 type tviewApp struct {
-	app            *tview.Application
-	mdRenderer     terminal.GlamourRenderer // can render markdown colours
-	flex           *tview.Flex              // the main screen set to root
-	commandArea    *tview.TextArea
-	dropDown       *tview.DropDown
-	titleView      *tview.TextView
-	outputView     *tview.TextView
-	submitButton   *tview.Button
-	progressView   *tview.TextView
-	progress       ModelResponseProgress
-	aimodel        genaimodel.Action
-	selectedPrompt string
-	pages          *tview.Pages // to support modal dialog
+	app               *tview.Application
+	mdRenderer        terminal.GlamourRenderer // can render markdown colours
+	flex              *tview.Flex              // the main screen set to root
+	commandArea       *tview.TextArea
+	dropDown          *tview.DropDown
+	titleView         *tview.TextView
+	outputView        *tview.TextView
+	outputTextArea    *tview.TextArea
+	outputPages       *tview.Pages
+	outputCurrentPage string
+	submitButton      *tview.Button
+	progressView      *tview.TextView
+	progress          ModelResponseProgress
+	aimodel           genaimodel.Action
+	selectedPrompt    string
+	pages             *tview.Pages // to support modal dialog
 }
 
 type TviewApp interface {
@@ -92,6 +105,7 @@ func (tv *tviewApp) Run() error {
 	return nil
 }
 func (tv *tviewApp) createOutputView() {
+
 	// Create a text view for displaying output
 	// contains the logic for rendering
 	tv.outputView = tview.NewTextView().
@@ -100,20 +114,92 @@ func (tv *tviewApp) createOutputView() {
 		SetSize(0, 0).
 		SetChangedFunc(func() {
 			tv.outputView.ScrollToEnd()
-		}).SetDoneFunc(func(key tcell.Key) {
-		if key == tcell.KeyTAB {
-			tv.app.SetFocus(tv.dropDown)
-		}
-	})
+		})
+
 	tv.outputView.SetBorder(false).
 		SetFocusFunc(func() {
 			tv.titleView.SetTextColor(tcell.ColorWhite)
 			tv.titleView.SetBackgroundColor(tcell.ColorDarkMagenta)
+			tv.titleView.SetText("AI Chat <ENTER to toggle view, TAB to focus next>")
 		}).SetBlurFunc(func() {
 		tv.titleView.SetTextColor(tcell.ColorGray)
 		tv.titleView.SetBackgroundColor(tcell.ColorDarkBlue)
+		tv.titleView.SetText("AI Chat")
+	}).SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey { // <-- Use SetInputCapture
+		if event.Key() == tcell.KeyTAB {
+			log.Println("TAB in outputView (InputCapture) - focusing DropDown")
+			tv.app.SetFocus(tv.dropDown)
+			return nil // Consume the event so it doesn't propagate
+		}
+		if event.Key() == tcell.KeyEnter {
+			log.Println("ENTER in outputView (InputCapture) - triggering toggleOutputView")
+			tv.toggleOutputView()
+			return nil // Consume the event
+		}
+		return event // Let other keys be processed normally
 	})
-	//tv.outputView.SetTextStyle(tcell.StyleDefault)
+
+	// TextArea for toggling
+	tv.outputTextArea = tview.NewTextArea()
+	tv.outputTextArea.SetBorder(true).SetInputCapture(
+		func(event *tcell.EventKey) *tcell.EventKey {
+			if event.Key() == tcell.KeyTAB || event.Key() == tcell.KeyEscape {
+				log.Println("TAB or ESC outputTextArea")
+
+				tv.toggleOutputView()
+				return nil // Consume the event
+
+			}
+			if event.Key() == tcell.KeyRune && event.Rune() == 'c' && event.Modifiers() == tcell.ModAlt {
+				// alt-C to copy text to clipboard
+				if tv.outputTextArea.HasSelection() {
+					selected, _, _ := tv.outputTextArea.GetSelection()
+					err := clipboard.WriteAll(selected)
+					if err != nil {
+						tv.progressView.SetText(fmt.Sprintf("Error copying to clipboard: %v", err))
+					}
+					tv.progressView.SetText("Copied to clipboard")
+				}
+				return nil
+			}
+			return event
+		}).SetBackgroundColor(tcell.ColorBlack)
+
+	tv.outputTextArea.SetFocusFunc(func() {
+		tv.titleView.SetTextColor(tcell.ColorWhite)
+		tv.titleView.SetBackgroundColor(tcell.ColorDarkCyan)
+		tv.titleView.SetText("AI Chat <ESC to toggle view, ALT-C to copy to clipboard>")
+
+	}).SetBlurFunc(func() {
+		tv.titleView.SetTextColor(tcell.ColorGray)
+		tv.titleView.SetBackgroundColor(tcell.ColorDarkBlue)
+		tv.titleView.SetText("AI Chat")
+
+	})
+
+	// Initialize outputPages and add the two views
+	tv.outputPages = tview.NewPages()
+	tv.outputPages.AddPage(PAGEISVIEW, tv.outputView, true, true)      // Start with outputView visible
+	tv.outputPages.AddPage(PAGEISEDIT, tv.outputTextArea, true, false) // Not visible initially
+
+	tv.outputCurrentPage = PAGEISVIEW
+}
+
+func (tv *tviewApp) toggleOutputView() {
+	if tv.outputCurrentPage == PAGEISVIEW {
+		log.Println("Switching to PAGEISEDIT")
+		// Currently showing outputView, switch to outputTextArea
+		tv.outputTextArea.SetText(tv.outputView.GetText(true), true) // Copy text
+		tv.outputPages.SwitchToPage(PAGEISEDIT)
+		tv.outputCurrentPage = PAGEISEDIT  // Update tracking variable
+		tv.app.SetFocus(tv.outputTextArea) // Set focus to the TextArea
+	} else {
+		log.Println("Switching to PAGEISVIEW")
+		// Currently showing outputTextArea, switch back to outputView
+		tv.outputPages.SwitchToPage(PAGEISVIEW)
+		tv.outputCurrentPage = PAGEISVIEW // Update tracking variable
+		tv.app.SetFocus(tv.outputView)    // Set focus back to the TextView
+	}
 }
 
 func (tv *tviewApp) createTextArea() {
@@ -222,7 +308,7 @@ func (tv *tviewApp) SetDefaultView() {
 	tv.flex.
 		SetDirection(tview.FlexRow).
 		AddItem(tv.titleView, 1, 1, false).
-		AddItem(tv.outputView, 0, 10, true).
+		AddItem(tv.outputPages, 0, 10, true).
 		AddItem(tv.dropDown, 1, 1, true).
 		AddItem(tv.commandArea, 0, 3, true).
 		AddItem(buttonRow, 1, 1, true)

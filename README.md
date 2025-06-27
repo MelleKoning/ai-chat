@@ -3,6 +3,10 @@
 The code repository ai-chat is to setup a console chat application that enables simple text interaction with the GEMINI API.
 The `/cmd/tviewchat` folder contains the main entry point to run against a cloud model.
 
+## Pre conditions
+
+To use this program, you need a valid API key to access Googles Gemini API endpoint. See links below for references
+
 ## Concept of accessing a model via an API
 
 The code folders in `/cmd` are aimed for a quick trial on getting access to a google Gemini model in the cloud. The code should be self explanatory.
@@ -66,14 +70,26 @@ Added is the ability to store chats as history files. This is because the Gemini
 
 Chats are stored in your home config folder, usually `~/.config/ai-chat/history`
 
+## Navigating the Console User Interface (CUI)
+
+Navigation in the UI goes via a few default keys:
+
+- TAB should switch focus to another GUI item
+- In the outputview, where model responses are shown, you can press ENTER to get and use the responses. That is When the AI model generated example code that you might want to try out, you can press ENTER to change the focus of the view and select any of the examples for copying. Pressing ESC returns to the default view to continue the chat
+- The dropdown is currently used for additional features like storing and loading chats and exiting the program
+- The inputbox at the bottom of the page is to type in your prompts for the modal. Type TAB and click ENTER when the SUBMIT button has the focus to send your prompt to the model in the cloud - then pleae be a bit patience awaiting the
+   response which will be generated in the outputView at the top of the screen
+
+
 ## Features not yet implemented
 
 There are several ideas to extend the code with some new features
 
-- Change the glamour model dynamically for other default colours
-- Cut down the history items as it seems there is a limit when sending history items
-- Dynamically choosing other Gemini models instead of hardcoded modelstring
-- More unit testing (oops) to assert the interaction of the model implementation and tview console app
+[x] Copy to clipboard support (requires installation of xsel on linux systems)
+[ ] Change the glamour model dynamically for other default colours
+[ ] Cut down the history items as it seems there is a limit when sending history items
+[ ] Dynamically choosing other Gemini models instead of hardcoded modelstring
+[-] More unit testing (oops) to assert the interaction of the model implementation and tview console app
 
 ## References
 

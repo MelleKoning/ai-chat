@@ -2,6 +2,7 @@ package genaimodel
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log"
 	"os"
@@ -14,8 +15,8 @@ import (
 )
 
 const (
-	//modelName = "gemini-2.0-flash"
-	modelName = "gemini-2.5-flash-preview-05-20"
+	modelName = "gemini-2.0-flash"
+	//modelName = "gemini-2.5-flash-preview-05-20"
 )
 
 type theModel struct {
@@ -45,8 +46,8 @@ type Action interface {
 	GetHistoryLength() int
 
 	// Chat History
-	StoreChatHistory(string) error
-	LoadChatHistory(string) ([]*genai.Content, error)
+	GetChatHistory() ([]byte, error)
+	LoadChatHistory([]byte) ([]*genai.Content, error)
 	GenerateChatSummary() (string, error)
 	ListModels() (string, error)
 }
@@ -338,8 +339,6 @@ func (m *theModel) ReviewFile(onChunk func(string)) (string, error) {
 	modelResponse := genai.NewContentFromText(fullString, genai.RoleModel)
 	m.chatHistory = append(m.chatHistory, modelResponse)
 
-	// fileio.WriteMarkdown(fullString, "codereview.md")
-
 	return fullString, nil
 }
 
@@ -401,4 +400,16 @@ func (m *theModel) GenerateChatSummary() (string, error) {
 	summary := resp.Candidates[0].Content.Parts[0].Text
 
 	return string(summary), nil
+}
+
+func (m *theModel) LoadChatHistory(jsonData []byte) ([]*genai.Content, error) {
+	err := json.Unmarshal(jsonData, &m.chatHistory)
+	if err != nil {
+		return nil, err
+	}
+	return m.chatHistory, nil
+}
+
+func (m *theModel) GetChatHistory() ([]byte, error) {
+	return json.Marshal(m.chatHistory)
 }
