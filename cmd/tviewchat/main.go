@@ -2,17 +2,82 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 
 	"github.com/MelleKoning/ai-chat/internal/genaimodel"
 	"github.com/MelleKoning/ai-chat/internal/terminal"
 	"github.com/MelleKoning/ai-chat/internal/tviewview"
 )
 
+// Config holds the configuration for the application.
+type Config struct {
+	DisplayStyle terminal.GlamourStyle `json:"DisplayStyle"`
+}
+
+func (c Config) loadConfig() {
+	configDir, err := os.UserConfigDir()
+	if err != nil {
+		c.DisplayStyle = terminal.GlamourStyleDracula // Default style
+		return
+	}
+
+	configFilePath := filepath.Join(configDir, "ai-chat", "config.json")
+	fileOpen, err := os.Open(configFilePath)
+	if err != nil {
+		log.Println("Error opening config file:", err)
+		c.DisplayStyle = terminal.GlamourStyleDracula // Default style
+		return
+	}
+
+	defer func() {
+		err = fileOpen.Close()
+		if err != nil {
+			log.Println("Error closing config file:", err)
+		}
+	}()
+
+	decoder := json.NewDecoder(fileOpen)
+	if err := decoder.Decode(&c); err != nil {
+		log.Println("Error decoding config file:", err)
+		c.DisplayStyle = terminal.GlamourStyleDracula // Default style
+		return
+	}
+}
+
+func (c Config) saveConfig() error {
+	configDir, err := os.UserConfigDir()
+	if err != nil {
+		return err
+	}
+	configPath := filepath.Join(configDir, "ai-chat")
+	if err := os.MkdirAll(configPath, 0755); err != nil {
+		return err
+	}
+	configFilePath := filepath.Join(configPath, "config.json")
+	file, err := os.Create(configFilePath)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		err = file.Close()
+		if err != nil {
+			log.Println("Error closing config file:", err)
+		}
+	}()
+
+	encoder := json.NewEncoder(file)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(c)
+}
+
 func main() {
-	mdRenderer, err := terminal.New()
+	var config Config
+	config.loadConfig()
+	mdRenderer, err := terminal.New(config.DisplayStyle)
 	if err != nil {
 		fmt.Println(err)
 		return
@@ -38,17 +103,30 @@ func main() {
 	tviewApp := tviewview.New(mdRenderer, modelAction)
 
 	// We want to have a default log
-	closeFile := OpenTheLog()
+	closeFile := SetupLogging()
 	defer closeFile()
 	// Run the application
 	if err := tviewApp.Run(); err != nil {
 		log.Fatal(err)
 	}
 
+	SaveAppConfig(tviewApp.CurrentGlamourStyle(), &config)
 	fmt.Println(tviewApp.Output())
+
 }
 
-func OpenTheLog() func() {
+func SaveAppConfig(style terminal.GlamourStyle, config *Config) {
+	config.DisplayStyle = style
+
+	err := config.saveConfig()
+	if err != nil {
+		log.Println("Error saving config:", err)
+	} else {
+		log.Println("Configuration saved successfully.")
+	}
+
+}
+func SetupLogging() func() {
 	// --- Logging Setup ---
 	logFile, err := os.OpenFile("tviewapp.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
