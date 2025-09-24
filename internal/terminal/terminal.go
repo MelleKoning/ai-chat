@@ -18,17 +18,63 @@ const colorCyan = "\033[36m"
 
 const CyanBackGroundWhiteForeground = "\033[44;37m"
 
+type GlamourStyle int
+
+const (
+	GlamourStyleDark GlamourStyle = iota
+	GlamourStyleLight
+	GlamourStyleNotty
+	GlamourStyleDracula
+	GlamourStyleTokyoNight
+)
+
+func (s GlamourStyle) String() string {
+	switch s {
+	case GlamourStyleDark:
+		return "Dark"
+	case GlamourStyleLight:
+		return "Light"
+	case GlamourStyleNotty:
+		return "Notty"
+	case GlamourStyleDracula:
+		return "Dracula"
+	case GlamourStyleTokyoNight:
+		return "Tokyo Night"
+	default:
+		return "Dracula"
+	}
+}
+
 type GlamourRenderer interface {
 	GetRendered(string) (string, error)
 	FormatUserText(string, int) (string, error)
+	CurrentStyle() GlamourStyle
+	AvailableGlamourStyles() []GlamourStyle
 }
 
 type glamourRenderer struct {
-	gr *glamour.TermRenderer
+	gr        *glamour.TermRenderer
+	styleUsed GlamourStyle
 }
 
-func New() (GlamourRenderer, error) {
-	selectedStyle := glamour.WithStandardStyle("dark")
+func getStyle(style GlamourStyle) glamour.TermRendererOption {
+	switch style {
+	case GlamourStyleDark:
+		return glamour.WithStandardStyle("dark")
+	case GlamourStyleLight:
+		return glamour.WithStandardStyle("light")
+	case GlamourStyleNotty:
+		return glamour.WithStandardStyle("notty")
+	case GlamourStyleDracula:
+		return glamour.WithStandardStyle("dracula")
+	case GlamourStyleTokyoNight:
+		return glamour.WithStandardStyle("tokyo-night")
+	default:
+		return glamour.WithStandardStyle("dark")
+	}
+}
+func New(style GlamourStyle) (GlamourRenderer, error) {
+	selectedStyle := getStyle(style)
 
 	r, err := glamour.NewTermRenderer(selectedStyle,
 		glamour.WithWordWrap(120))
@@ -36,7 +82,8 @@ func New() (GlamourRenderer, error) {
 		return nil, err
 	}
 	return &glamourRenderer{
-		gr: r,
+		gr:        r,
+		styleUsed: style,
 	}, nil
 }
 
@@ -51,6 +98,21 @@ func (gr *glamourRenderer) FormatUserText(str string, historyLength int) (string
 	s = s + fmt.Sprintf(CyanBackGroundWhiteForeground+"%s\n"+colorReset, str)
 	return s, nil
 }
+
+func (g *glamourRenderer) CurrentStyle() GlamourStyle {
+	return g.styleUsed
+}
+
+// ...existing code...
+
+func (g *glamourRenderer) AvailableGlamourStyles() []GlamourStyle {
+	var allStyles []GlamourStyle
+	for i := 0; i <= int(GlamourStyleTokyoNight); i++ {
+		allStyles = append(allStyles, GlamourStyle(i))
+	}
+	return allStyles
+}
+
 func PrintGlamourString(theString string) {
 	termRenderer, err := glamour.NewTermRenderer(glamour.WithWordWrap(120), glamour.WithStandardStyle("dracula"))
 	if err != nil {

@@ -41,6 +41,7 @@ type TviewApp interface {
 	Run() error
 	SetDefaultView()
 	Output() string
+	CurrentGlamourStyle() terminal.GlamourStyle
 }
 
 func (tv *tviewApp) Output() string {
@@ -76,6 +77,10 @@ func New(mdrenderer terminal.GlamourRenderer,
 	tv.app.SetRoot(tv.flex, true)
 
 	return tv
+}
+
+func (tv *tviewApp) CurrentGlamourStyle() terminal.GlamourStyle {
+	return tv.mdRenderer.CurrentStyle()
 }
 
 func (tv *tviewApp) createTitleView() {
@@ -121,6 +126,7 @@ func (tv *tviewApp) createOutputView() {
 			tv.titleView.SetTextColor(tcell.ColorWhite)
 			tv.titleView.SetBackgroundColor(tcell.ColorDarkMagenta)
 			tv.titleView.SetText("AI Chat <ENTER to toggle view, TAB to focus next>")
+
 		}).SetBlurFunc(func() {
 		tv.titleView.SetTextColor(tcell.ColorGray)
 		tv.titleView.SetBackgroundColor(tcell.ColorDarkBlue)
@@ -138,6 +144,12 @@ func (tv *tviewApp) createOutputView() {
 		}
 		return event // Let other keys be processed normally
 	})
+
+	if tv.mdRenderer.CurrentStyle() == terminal.GlamourStyleLight {
+		tv.outputView.SetBackgroundColor(tcell.ColorWhite)
+	} else {
+		tv.outputView.SetBackgroundColor(tcell.ColorBlack)
+	}
 
 	// TextArea for toggling
 	tv.outputTextArea = tview.NewTextArea()
@@ -163,7 +175,15 @@ func (tv *tviewApp) createOutputView() {
 				return nil
 			}
 			return event
-		}).SetBackgroundColor(tcell.ColorBlack)
+		})
+
+	renderedText, err := tv.mdRenderer.GetRendered(tv.outputView.GetText(true))
+	if err != nil {
+		log.Printf("Error rendering markdown: %v", err)
+		tv.outputView.SetText("Error rendering markdown") // Show an error message in the view
+	} else {
+		tv.outputView.SetText(renderedText)
+	}
 
 	tv.outputTextArea.SetFocusFunc(func() {
 		tv.titleView.SetTextColor(tcell.ColorWhite)
@@ -281,6 +301,11 @@ func (tv *tviewApp) createDropDown() {
 		if key == tcell.KeyTAB {
 			tv.app.SetFocus(tv.commandArea)
 		}
+	})
+
+	tv.dropDown.AddOption("Select Style", func() {
+		log.Println("Select Style option selected")
+		tv.showStyleModal() // Show the style selection modal
 	})
 }
 
