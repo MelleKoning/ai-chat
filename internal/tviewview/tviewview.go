@@ -35,6 +35,7 @@ type tviewApp struct {
 	aimodel           genaimodel.Action
 	selectedPrompt    string
 	pages             *tview.Pages // to support modal dialog
+	chatHistory       *ChatHistoryHandler
 }
 
 type TviewApp interface {
@@ -73,6 +74,9 @@ func New(mdrenderer terminal.GlamourRenderer,
 	tv.createSubmitButton()
 	tv.createDropDown()
 	tv.createProgressView()
+	// initialize chat history handler
+	tv.chatHistory = NewChatHistoryHandler(tv)
+	// route status updates through event-driven callback
 	tv.SetDefaultView()
 	tv.app.SetRoot(tv.flex, true)
 
@@ -287,10 +291,15 @@ func (tv *tviewApp) createDropDown() {
 					tv.UpdateOutputView(result, err)
 				}()
 			case "Store Chat History":
-				tv.storeChatHistory()
+				tv.chatHistory.storeChatHistory()
 
 			case "Load Chat History":
-				tv.SelectChatHistoryFile()
+				tv.chatHistory.SelectChatHistoryFile(func(fname string) {
+					if fname != "" {
+						tv.chatHistory.loadChatHistory(fname)
+						tv.app.Draw()
+					}
+				})
 
 			case "SelectModel":
 				tv.SelectModel(func(modelName string) {

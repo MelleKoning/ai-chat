@@ -24,73 +24,74 @@ const (
 	confirmationPageName       = "confirmation"
 )
 
-func (tv *tviewApp) storeChatHistory() {
-	filename, _ := tv.GenerateChatHistoryFilename()
-	jsonData, err := tv.aimodel.GetChatHistory()
+// ChatHistoryHandler encapsulates chat history logic and UI interactions.
+type ChatHistoryHandler struct {
+	tv *tviewApp
+}
+
+func NewChatHistoryHandler(tv *tviewApp) *ChatHistoryHandler { return &ChatHistoryHandler{tv: tv} }
+
+// OnStatus reports status/progress messages via tview's event loop.
+func (h *ChatHistoryHandler) OnStatus(msg string) {
+	if h.tv != nil && h.tv.app != nil && h.tv.progressView != nil {
+		h.tv.app.QueueUpdate(func() { h.tv.progressView.SetText(msg) })
+	}
+}
+
+func (h *ChatHistoryHandler) storeChatHistory() {
+	filename, _ := h.GenerateChatHistoryFilename()
+	jsonData, err := h.tv.aimodel.GetChatHistory()
 	if err != nil {
 		log.Printf("Error storing chat history: %v", err)
-		tv.progressView.SetText(fmt.Sprintf("Error storing chat history: %v", err))
+		h.OnStatus(fmt.Sprintf("Error storing chat history: %v", err))
 	}
 	err = fileio.StoreChatHistory(filename, jsonData)
 	if err != nil {
 		log.Printf("Error storing chat history: %v", err)
-		tv.progressView.SetText(fmt.Sprintf("Error storing chat history: %v", err))
+		h.OnStatus(fmt.Sprintf("Error storing chat history: %v", err))
 	} else {
 		log.Printf("Chat history stored to: %s", filename)
 		modal := tview.NewModal().
 			SetText(fmt.Sprintf("Chat history stored to:\n%s", filename)).
 			AddButtons([]string{"OK"}).
 			SetDoneFunc(func(buttonIndex int, buttonLabel string) {
-				//tv.app.QueueUpdateDraw(func() {
-				tv.app.SetRoot(tv.flex, true) // Set focus back to the main layout
-				//})
+				h.tv.app.SetRoot(h.tv.flex, true) // Set focus back to the main layout
 			})
-		tv.progressView.SetText(filename)
-		tv.app.SetRoot(modal, false)
-
+		h.OnStatus(filename)
+		h.tv.app.SetRoot(modal, false)
 	}
 }
 
-// loadChatHistory loads chat history from a file
-// and runs from the async routine selected from the
-// dropdown, so updates are done via QueueUpdateDraw
-func (tv *tviewApp) loadChatHistory(filename string) {
+// loadChatHistory loads chat history from a file and updates UI via QueueUpdate/Draw.
+func (h *ChatHistoryHandler) loadChatHistory(filename string) {
 	// Start progress *before* loading from disk to measure total time.
-	tv.app.QueueUpdate(func() {
-		tv.progress.startProgress()
-		tv.outputView.Clear() // Clear the output view *before* starting the load
+	h.tv.app.QueueUpdate(func() {
+		h.tv.progress.startProgress()
+		h.tv.outputView.Clear() // Clear the output view *before* starting the load
 	})
 	jsonHistory, err := fileio.LoadChatHistory(filename)
 	if err != nil {
 		log.Printf("Error loading chat history: %v", err)
-		tv.app.QueueUpdate(func() {
-			tv.progressView.SetText(fmt.Sprintf("Error loading chat history: %v", err))
-		})
-
+		h.OnStatus(fmt.Sprintf("Error loading chat history: %v", err))
 		return
 	}
-	contentList, err := tv.aimodel.LoadChatHistory(jsonHistory)
+	contentList, err := h.tv.aimodel.LoadChatHistory(jsonHistory)
 	if err != nil {
 		log.Printf("Error loading chat history: %v", err)
-		tv.app.QueueUpdate(func() {
-			tv.progressView.SetText(fmt.Sprintf("Error loading chat history: %v", err))
-		})
-
+		h.OnStatus(fmt.Sprintf("Error loading chat history: %v", err))
 		return
 	}
 	log.Printf("Chat history loaded from: %s", filename)
 
 	// Update the outputView with the loaded chat history
 	for _, content := range contentList {
-		// Format the output based on the content's role (user or model)
 		if content.Role == "user" {
-			tv.app.QueueUpdate(func() {
-				tv.progress.appendUserCommandToOutput(content.Parts[0].Text)
+			h.tv.app.QueueUpdate(func() {
+				h.tv.progress.appendUserCommandToOutput(content.Parts[0].Text)
 			})
-
 		} else {
-			tv.app.QueueUpdate(func() {
-				tv.progress.handleFinalModelResult(genaimodel.ChatResult{
+			h.tv.app.QueueUpdate(func() {
+				h.tv.progress.handleFinalModelResult(genaimodel.ChatResult{
 					Response:   content.Parts[0].Text,
 					ChunkCount: 1,
 				}, nil)
@@ -98,8 +99,8 @@ func (tv *tviewApp) loadChatHistory(filename string) {
 		}
 	}
 
-	tv.app.QueueUpdateDraw(func() {
-		tv.app.SetRoot(tv.flex, true)
+	h.tv.app.QueueUpdateDraw(func() {
+		h.tv.app.SetRoot(h.tv.flex, true)
 	})
 }
 
@@ -134,7 +135,7 @@ func getChatHistoryFiles() ([]string, error) {
 	return files, nil
 }
 
-func (tv *tviewApp) refreshFileList(fileList *tview.List) ([]string, error) {
+func (h *ChatHistoryHandler) refreshFileList(fileList *tview.List) ([]string, error) {
 	files, err := getChatHistoryFiles()
 	if err != nil {
 		return nil, fmt.Errorf("error getting chat history files: %w", err)
@@ -151,32 +152,37 @@ func (tv *tviewApp) refreshFileList(fileList *tview.List) ([]string, error) {
 	return files, nil // Return the slice of file names
 }
 
-func (tv *tviewApp) createChatHistorySelectionModal(selectedFileChan chan string) {
+func (h *ChatHistoryHandler) createChatHistorySelectionModal(onSelected func(string)) {
 	fileList := tview.NewList()
-	chatHistoryFiles, err := tv.refreshFileList(fileList) // Capture the returned slice
+	chatHistoryFiles, err := h.refreshFileList(fileList) // Capture the returned slice
 	if err != nil {
 		log.Printf("Error refreshing file list: %v", err)
-		tv.progressView.SetText(fmt.Sprintf("Error refreshing chat history files: %v", err))
-		selectedFileChan <- ""
+		h.OnStatus(fmt.Sprintf("Error refreshing chat history files: %v", err))
+		onSelected("")
 		return
 	}
 
 	fileList.SetBorder(true).SetTitle("Select Chat History File (ESC to exit)")
 	// Create a function to close the modal and reset the UI
 	closeModal := func() {
-		tv.app.SetInputCapture(nil)                     // undo the override of the TAB and ESC key
-		tv.pages.RemovePage(fileSelectionModalPageName) // Remove the modal from pages
-		tv.pages.RemovePage(confirmationPageName)       // Remove confirmation page if it exist
-		tv.app.SetRoot(tv.flex, true)                   // Restore original layout
+		h.tv.app.SetInputCapture(nil)                     // undo the override of the TAB and ESC key
+		h.tv.pages.RemovePage(fileSelectionModalPageName) // Remove the modal from pages
+		h.tv.pages.RemovePage(confirmationPageName)       // Remove confirmation page if it exist
+		h.tv.app.SetRoot(h.tv.flex, true)                 // Restore original layout
 	}
 
 	selectButton := tview.NewButton("Select").SetSelectedFunc(func() {
 		index := fileList.GetCurrentItem()
-		selectedFileChan <- chatHistoryFiles[index] // Send selected file
-		log.Printf("Selected chat history file: %s", chatHistoryFiles[index])
-		closeModal()
-		tv.pages = tv.pages.RemovePage(fileSelectionModalPageName) // Close the modal
-		tv.app.SetRoot(tv.flex, true)
+		if index >= 0 && index < len(chatHistoryFiles) {
+			filename := chatHistoryFiles[index] // Get selected file
+			log.Printf("Selected chat history file: %s", filename)
+			closeModal()
+			h.tv.pages = h.tv.pages.RemovePage(fileSelectionModalPageName) // Close the modal
+			h.tv.app.SetRoot(h.tv.flex, true)
+			onSelected(filename) // callback with filename
+		} else {
+			onSelected("") // invalid selection
+		}
 	})
 
 	var filenameToBeDeleted string
@@ -199,11 +205,11 @@ func (tv *tviewApp) createChatHistorySelectionModal(selectedFileChan chan string
 			}
 
 			// Refresh the fileList
-			if _, err := tv.refreshFileList(fileList); err != nil {
+			if _, err := h.refreshFileList(fileList); err != nil {
 				log.Printf("Error refreshing file list: %v", err)
 				// Consider showing an error message to the user
 			}
-			tv.pages = tv.pages.SwitchToPage(fileSelectionModalPageName)
+			h.tv.pages = h.tv.pages.SwitchToPage(fileSelectionModalPageName)
 		})
 	confirmationModal.Box.SetBorder(true).
 		SetRect(10, 10, 30, 5)
@@ -219,8 +225,8 @@ func (tv *tviewApp) createChatHistorySelectionModal(selectedFileChan chan string
 			confirmationModal.SetText("Invalid file selected. Cannot proceed with deletion.")
 			log.Println("Invalid file index selected")
 		}
-		tv.pages = tv.pages.SwitchToPage("confirmation")
-		tv.app.SetRoot(tv.pages, true)
+		h.tv.pages = h.tv.pages.SwitchToPage("confirmation")
+		h.tv.app.SetRoot(h.tv.pages, true)
 	})
 	// Create buttons for selecting or deleting a file
 	buttons := tview.NewFlex().
@@ -235,78 +241,70 @@ func (tv *tviewApp) createChatHistorySelectionModal(selectedFileChan chan string
 
 	// Handle file selection
 	fileList.SetSelectedFunc(func(index int, mainText, secondaryText string, shortcut rune) {
-		selectedFileChan <- chatHistoryFiles[index] // Send selected file
-		log.Printf("Selected chat history file: %s", chatHistoryFiles[index])
-		closeModal() // Signal modal is closed
+		if index >= 0 && index < len(chatHistoryFiles) {
+			filename := chatHistoryFiles[index] // selected file
+			log.Printf("Selected chat history file: %s", filename)
+			closeModal() // Signal modal is closed
+			onSelected(filename)
+		} else {
+			onSelected("")
+		}
 	})
 
 	// Set input capture to handle TAB and ESCAPE
-	tv.app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+	h.tv.app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		switch event.Key() {
 		case tcell.KeyTAB:
-			if tv.app.GetFocus() == fileList {
-				tv.app.SetFocus(selectButton)
-			} else if tv.app.GetFocus() == selectButton {
-				tv.app.SetFocus(deleteButton)
-			} else if tv.app.GetFocus() == deleteButton {
-				tv.app.SetFocus(fileList)
+			if h.tv.app.GetFocus() == fileList {
+				h.tv.app.SetFocus(selectButton)
+			} else if h.tv.app.GetFocus() == selectButton {
+				h.tv.app.SetFocus(deleteButton)
+			} else if h.tv.app.GetFocus() == deleteButton {
+				h.tv.app.SetFocus(fileList)
 			}
 			return nil // Consume the event
 		case tcell.KeyEscape:
 			closeModal()           // Signal modal is closed
-			selectedFileChan <- "" // Send empty string to signal cancellation
+			onSelected("") // Signal cancellation
 			return nil             // Consume the event
 		}
 		return event // Pass other events through
 	})
 
 	// Add the modal to the pages
-	tv.pages = tv.pages.AddPage(fileSelectionModalPageName, modal, true, true)
+	h.tv.pages = h.tv.pages.AddPage(fileSelectionModalPageName, modal, true, true)
 	// Add the confirmation page to the pages
-	tv.pages = tv.pages.AddPage(confirmationPageName, confirmationModal, false, false)
+	h.tv.pages = h.tv.pages.AddPage(confirmationPageName, confirmationModal, false, false)
 
 	// Set the modal as the root of the application
-	tv.pages.SwitchToPage(fileSelectionModalPageName)
-	tv.app.SetRoot(tv.pages, true)
+	h.tv.pages.SwitchToPage(fileSelectionModalPageName)
+	h.tv.app.SetRoot(h.tv.pages, true)
 }
 
-func (tv *tviewApp) SelectChatHistoryFile() {
-	// Create the channel
-	selectedFileChan := make(chan string)
-
-	// Start the goroutine to await the response *before* creating the modal
-	go func() {
-		defer close(selectedFileChan)
-
-		selectedFile := <-selectedFileChan // Receive the file
-
-		if selectedFile == "" {
+func (h *ChatHistoryHandler) SelectChatHistoryFile(onSelected func(string)) {
+	h.createChatHistorySelectionModal(func(filename string) {
+		if filename == "" {
 			log.Println("Chat history selection cancelled or failed.")
 			return
 		}
-
-		tv.loadChatHistory(selectedFile)
-		tv.app.Draw()
-	}()
-
-	// Open the chat history selection modal, passing in the channel
-	tv.createChatHistorySelectionModal(selectedFileChan)
+		// Invoke the callback asynchronously to avoid blocking tview's event loop.
+		go onSelected(filename)
+	})
 }
 
-// In your tviewApp:
-func (tv *tviewApp) GenerateChatHistoryFilename() (string, error) {
+// GenerateChatHistoryFilename returns a sanitized filename based on a model-generated summary.
+func (h *ChatHistoryHandler) GenerateChatHistoryFilename() (string, error) {
 	var summary string
-	summary, err := tv.aimodel.GenerateChatSummary()
+	summary, err := h.tv.aimodel.GenerateChatSummary()
 	if err != nil {
 		log.Printf("Error generating chat summary: %v", err)
-
 		// use default filename - it will be sanitized further
 		summary = "chat_summary"
 	}
 	filename := fmt.Sprintf("chat_%s_%s.json", time.Now().Format("20060102150405"), summary)
 
 	// Sanitize and format the summary for use as a filename
-	sanitizedSummary := sanitizeFilename(filename) // Implement sanitizeFilename
+	sanitizedSummary := sanitizeFilename(filename)
 
 	return sanitizedSummary, nil
 }
