@@ -175,16 +175,17 @@ func (p *ModelResponseProgress) handleFinalModelResult(result genaimodel.ChatRes
 		close(p.StopSpinner)
 	})
 
+	renderedResult, _ := p.tv.mdRenderer.GetRendered(result.Response)
+	txtRendered := tview.TranslateANSI(renderedResult)
+
 	if chatErr != nil {
-		p.tv.outputView.SetText(p.tv.outputView.GetText(false) + result.Response + "\n" + chatErr.Error())
-	} else {
-		renderedResult, _ := p.tv.mdRenderer.GetRendered(result.Response)
-		txtRendered := tview.TranslateANSI(renderedResult)
-		p.tv.outputView.SetText(p.tv.outputView.GetText(false) + txtRendered)
-		// set last progress to progressView
-		p.progressData.SetFinalResult(result.ChunkCount, len(result.Response))
-		p.tv.progressView.SetText(p.progressData.String())
+		txtRendered += "\n" + chatErr.Error()
 	}
+	p.tv.outputView.SetText(p.tv.outputView.GetText(false) + txtRendered)
+	// set last progress to progressView
+	p.progressData.SetFinalResult(result.ChunkCount, len(result.Response))
+	p.tv.progressView.SetText(p.progressData.String())
+
 	p.tv.app.SetFocus(p.tv.outputView)
 }
 func (p *ModelResponseProgress) startProgress() {
