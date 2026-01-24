@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"os"
 	"strings"
@@ -15,7 +16,7 @@ import (
 )
 
 const (
-	modelName = "gemini-2.0-flash"
+	modelName = "gemini-2.5-flash"
 	//modelName = "gemini-2.5-flash-preview-05-20"
 )
 
@@ -23,6 +24,7 @@ type theModel struct {
 	systemInstruction string
 	client            GeminiClientAPI
 	chatHistory       []*genai.Content
+	model             string
 }
 
 type ChatResult struct {
@@ -50,6 +52,7 @@ type Action interface {
 	LoadChatHistory([]byte) ([]*genai.Content, error)
 	GenerateChatSummary() (string, error)
 	ListModels() (string, error)
+	UpdateModelName(modelName string)
 }
 
 func NewGeminiClient(ctx context.Context, apiKey string) (GeminiClientAPI, error) {
@@ -72,6 +75,7 @@ func NewModel(ctx context.Context,
 	return &theModel{
 		systemInstruction: systemInstruction,
 		client:            genaiClient,
+		model:             modelName, // Initialize with the default modelName constant
 	}, nil
 }
 
@@ -88,6 +92,12 @@ func (m *theModel) ListModels() (string, error) {
 
 	return modelNames, nil
 }
+
+func (m *theModel) UpdateModelName(modelName string) {
+	m.model = modelName
+	log.Printf("Model name updated to: %s", modelName)
+}
+
 func (m *theModel) GetHistoryLength() int {
 	return len(m.chatHistory)
 }
@@ -160,7 +170,7 @@ func (m *theModel) ChatMessage(userPrompt string, onChunk func(string)) (ChatRes
 	m.chatHistory = append(m.chatHistory, genai.NewContentFromText(userPrompt, genai.RoleUser))
 
 	// Create chat with history
-	chat, err := m.client.ChatCreate().Create(ctx, modelName, nil, m.chatHistory)
+	chat, err := m.client.ChatCreate().Create(ctx, m.model, nil, m.chatHistory)
 	if err != nil {
 		// If chat creation fails, immediately return and cancel context.
 		cancel()
@@ -178,6 +188,7 @@ func (m *theModel) ChatMessage(userPrompt string, onChunk func(string)) (ChatRes
 	// The `stream` channel itself often handles closing when the API call is done
 	// or an error occurs.
 	for respChunk, err := range stream { // Iterate without checking 'err' in the range clause itself
+		chunkCount++
 		if err != nil {
 			log.Println("Error receiving stream:", err)
 			streamErr = err
@@ -190,8 +201,8 @@ func (m *theModel) ChatMessage(userPrompt string, onChunk func(string)) (ChatRes
 			// Decide how to handle this. You might want to treat it as an error and break,
 			// or just skip this malformed chunk if acceptable.
 			// For robustness, treating it as an error is safer:
-			streamErr = errors.New("received malformed chunk data")
-			break
+			streamErr = fmt.Errorf("received malformed chunk data: %+v", respChunk)
+			continue
 		}
 		part := respChunk.Candidates[0].Content.Parts[0] // Potential nil dereference if respChunk is nil!
 		select {
@@ -204,7 +215,7 @@ func (m *theModel) ChatMessage(userPrompt string, onChunk func(string)) (ChatRes
 			// get the final result
 		}
 		fullString.WriteString(part.Text)
-		chunkCount++
+
 	}
 
 	cancel()         // Signal the goroutine to stop processing chunks
@@ -241,7 +252,7 @@ func (m *theModel) SendSystemPrompt(onChunk func(string)) (ChatResult, error) {
 	m.chatHistory = append(m.chatHistory, genai.NewContentFromText(m.systemInstruction, genai.RoleModel))
 
 	// Create chat with history
-	chat, err := m.client.ChatCreate().Create(ctx, modelName, nil, m.chatHistory)
+	chat, err := m.client.ChatCreate().Create(ctx, m.model, nil, m.chatHistory)
 	if err != nil {
 		return ChatResult{}, err
 	}
@@ -315,7 +326,7 @@ func (m *theModel) ReviewFile(onChunk func(string)) (string, error) {
 	//genaiContents = append(genaiContents, genaiCommandText...)
 	stream := m.client.Models().GenerateContentStream(
 		context.Background(),
-		modelName,
+		m.model,
 		genaiContents,
 		config,
 	)
@@ -380,7 +391,7 @@ func buildString(resp []*genai.Part) string {
 func (m *theModel) GenerateChatSummary() (string, error) {
 	ctx := context.Background()
 
-	chat, err := m.client.ChatCreate().Create(ctx, modelName, nil, m.chatHistory)
+	chat, err := m.client.ChatCreate().Create(ctx, m.model, nil, m.chatHistory)
 	if err != nil {
 		return "", err
 	}
